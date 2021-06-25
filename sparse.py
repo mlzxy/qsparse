@@ -37,7 +37,7 @@ class _InternalSparseFunc(torch.autograd.Function):
                     f"[SparseLayer @ {n_updates} # {name}] valid {valid_ratio:.02f}, sparse {1 - valid_ratio:.02f}"
                 )
         ctx.save_for_backward(mask)
-        return x * mask.expand((x.shape[0],) + tuple(mask.shape)), mask, cur_sparsity
+        return x * mask.expand((x.shape[0],) + tuple(mask.shape)), mask, torch.Tensor([cur_sparsity,])
 
     @staticmethod
     def backward(ctx, *grad_out):
@@ -46,7 +46,7 @@ class _InternalSparseFunc(torch.autograd.Function):
         grad_input = grad_input * mask.expand(
             (grad_input.shape[0],) + tuple(mask.shape)
         )
-        return (grad_input, None)
+        return (grad_input, None, None)
 
 
 class SparseLayer(nn.Module):
@@ -100,7 +100,7 @@ class SparseLayer(nn.Module):
             ],
         )
         self.mask = new_mask
-        self._cur_sparsity = new_sparsity
+        self._cur_sparsity = new_sparsity.item()
         if self.training:
             self._n_updates += 1
         return spx

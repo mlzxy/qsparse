@@ -16,3 +16,6 @@ from .efficientnet import *
 from .regnet import *
 from .dla_simple import *
 from .dla import *
+
+
+from .resnet_sparse import *

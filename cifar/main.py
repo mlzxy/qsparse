@@ -17,8 +17,10 @@ from cifar.utils import progress_bar
 
 parser = argparse.ArgumentParser(description='PyTorch CIFAR10 Training')
 parser.add_argument('--lr', default=0.1, type=float, help='learning rate')
+parser.add_argument('--no-ckpt', default=False, action='store_true')
 parser.add_argument('--resume', '-r', action='store_true',
                     help='resume from checkpoint')
+parser.add_argument('--sparse', default="")
 args = parser.parse_args()
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -52,10 +54,15 @@ testloader = torch.utils.data.DataLoader(
 classes = ('plane', 'car', 'bird', 'cat', 'deer',
            'dog', 'frog', 'horse', 'ship', 'truck')
 
+print(f"==> Train Epoch Size ({len(trainloader)})")  # 391, useful to designing sparsifying schedule
 # Model
 print('==> Building model..')
 # net = VGG('VGG19')
-# net = ResNet18()
+if args.sparse:
+    print(f'==> Use Sparse {args.sparse}')
+    net = SparseResNet18(**eval(f'dict({args.sparse})'))
+else:
+    net = ResNet18()
 # net = PreActResNet18()
 # net = GoogLeNet()
 # net = DenseNet121()
@@ -68,7 +75,7 @@ print('==> Building model..')
 # net = ShuffleNetV2(1)
 # net = EfficientNetB0()
 # net = RegNetX_200MF()
-net = SimpleDLA()
+# net = SimpleDLA()
 net = net.to(device)
 if device == 'cuda':
     net = torch.nn.DataParallel(net)
@@ -142,10 +149,15 @@ def test(epoch):
             'acc': acc,
             'epoch': epoch,
         }
-        if not os.path.isdir('checkpoint'):
-            os.mkdir('checkpoint')
-        torch.save(state, './checkpoint/ckpt.pth')
         best_acc = acc
+        if args.no_ckpt:
+            pass
+        else:
+            if not os.path.isdir('checkpoint'):
+                os.mkdir('checkpoint')
+            name = 'ckpt-sparse.pth' if args.sparse else 'ckpt.pth' 
+            torch.save(state, f'./checkpoint/{name}')
+
 
 
 for epoch in range(start_epoch, start_epoch+200):
