@@ -1,1 +1,1 @@
-python3 ./cifar/main.py --no-ckpt --sparse sparsity=0.5,start_steps=20000,prune_freq=2000,n_prunes=5
+python3 ./cifar/main.py --sparse sparsity=0.5,start_steps=60000,prune_freq=3900,n_prunes=4

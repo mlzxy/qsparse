@@ -1,7 +1,12 @@
 import torch
 import torch.autograd as autograd
 import torch.nn as nn
-from math import pow, prod
+from math import pow
+from functools import reduce # Valid in Python 2.6+, required in Python 3
+import operator
+
+def prod(lst):
+    return reduce(operator.mul, lst, 1)
 
 
 class _InternalSparseFunc(torch.autograd.Function):
@@ -37,7 +42,7 @@ class _InternalSparseFunc(torch.autograd.Function):
                     f"[SparseLayer @ {n_updates} # {name}] valid {valid_ratio:.02f}, sparse {1 - valid_ratio:.02f}"
                 )
         ctx.save_for_backward(mask)
-        return x * mask.expand((x.shape[0],) + tuple(mask.shape)), mask, torch.Tensor([cur_sparsity,])
+        return x * mask.expand((x.shape[0],) + tuple(mask.shape)), mask, torch.Tensor([cur_sparsity,]).to(x.device)
 
     @staticmethod
     def backward(ctx, *grad_out):
@@ -81,7 +86,7 @@ class SparseLayer(nn.Module):
         if not self._init:
             assert len(x.shape) > 1
             self.mask = nn.Parameter(
-                torch.ones(*x.shape[1:], dtype=torch.bool, requires_grad=False),
+                torch.ones(*x.shape[1:], dtype=torch.bool, requires_grad=False, device=x.device),
                 requires_grad=False,
             )
             self._init = True
