@@ -25,4 +25,4 @@ The cifar10 training result is pretty impressive as seen in logs [baseline.log](
 
 | cifar10 | baseline | sparse (50% for every convolution) |
 |---------|----------|------------------------------------|
-| acc     | 94.33%   | 94.22%                             |
+| acc     | 94.33%   | 94.39%                             |
