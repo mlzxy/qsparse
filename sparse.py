@@ -2,8 +2,10 @@ import torch
 import torch.autograd as autograd
 import torch.nn as nn
 from math import pow
-from functools import reduce # Valid in Python 2.6+, required in Python 3
+from functools import reduce  # Valid in Python 2.6+, required in Python 3
 import operator
+from collections import deque
+
 
 def prod(lst):
     return reduce(operator.mul, lst, 1)
@@ -42,7 +44,15 @@ class _InternalSparseFunc(torch.autograd.Function):
                     f"[SparseLayer @ {n_updates} # {name}] valid {valid_ratio:.02f}, sparse {1 - valid_ratio:.02f}"
                 )
         ctx.save_for_backward(mask)
-        return x * mask.expand((x.shape[0],) + tuple(mask.shape)), mask, torch.Tensor([cur_sparsity,]).to(x.device)
+        return (
+            x * mask.expand((x.shape[0],) + tuple(mask.shape)),
+            mask,
+            torch.Tensor(
+                [
+                    cur_sparsity,
+                ]
+            ).to(x.device),
+        )
 
     @staticmethod
     def backward(ctx, *grad_out):
@@ -58,15 +68,24 @@ class SparseLayer(nn.Module):
     """ Custom layer that gradually applies a binary sparse mask on input"""
 
     def __init__(
-        self, sparsity=0.5, prune_freq=1000, start_steps=1000, n_prunes=4, name=""
+        self,
+        sparsity=0.5,
+        prune_freq=1000,
+        start_steps=1000,
+        n_prunes=4,
+        name="",
+        gamma=0,
     ):
-        """[summary]
+        """
+
+        bt + bt-1 * gamma + bt-2 * gamma^2 + ...
 
         Args:
             sparsity (float, optional): target sparse ratio, the larger, the more zeros we have. Defaults to 0.5.
             prune_freq (int, optional): how many steps between each pruning stage. Defaults to 1000.
             start_steps (int, optional): when to start pruning. Defaults to 1000.
             n_prunes (int, optional): how many pruning stages. Defaults to 4.
+            gamma (int, optional): how much weight to assign for history batch at every step. Default to 0 (only use current batch).
         """
 
         super().__init__()
@@ -76,6 +95,7 @@ class SparseLayer(nn.Module):
         self.prune_freq = prune_freq
         self.start_steps = start_steps
         self.n_prunes = n_prunes
+        self.gamma = gamma
         self.name = name
 
         self._cur_sparsity = 0
@@ -86,10 +106,13 @@ class SparseLayer(nn.Module):
         if not self._init:
             assert len(x.shape) > 1
             self.mask = nn.Parameter(
-                torch.ones(*x.shape[1:], dtype=torch.bool, requires_grad=False, device=x.device),
+                torch.ones(
+                    *x.shape[1:], dtype=torch.bool, requires_grad=False, device=x.device
+                ),
                 requires_grad=False,
             )
             self._init = True
+
         spx, new_mask, new_sparsity = self.func(
             x,
             [

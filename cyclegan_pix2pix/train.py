@@ -32,7 +32,7 @@ if __name__ == "__main__":
     dataset_size = len(dataset)  # get the number of images in the dataset.
     print("The number of training images = %d" % dataset_size)
     print("The number of batches = %d" % len(dataset.dataloader))
-    
+
     if opt.sparse:
         opt.sparse = eval(f"dict({opt.sparse})")
         print("sparse training is enable, currently only resnet is supported")

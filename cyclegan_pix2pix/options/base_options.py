@@ -43,6 +43,7 @@ class BaseOptions:
             default="./checkpoints",
             help="models are saved here",
         )
+        parser.add_argument("--save-network", action="store_true", default=False)
         # model parameters
         parser.add_argument(
             "--model",
