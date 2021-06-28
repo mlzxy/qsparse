@@ -138,3 +138,6 @@ dmypy.json
 cython_debug/
 data
 checkpoint
+checkpoints
+cyclegan_pix2pix/checkpoints
+!cyclegan_pix2pix/data/
