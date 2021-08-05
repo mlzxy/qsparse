@@ -127,7 +127,7 @@ class SparseLayer(nn.Module):
                 self.name,
             ],
         )
-        self.mask = new_mask
+        self.mask.data = new_mask
         self._cur_sparsity = new_sparsity.item()
         if self.training:
             self._n_updates += 1
