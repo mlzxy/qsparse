@@ -6,12 +6,28 @@ from copy import deepcopy
 
 class Quantize(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, input: torch.Tensor, bits=8, n=5, channel_index=1, int_compute=False):
+    def forward(
+        ctx, input: torch.Tensor, bits=8, n=5, channel_index=1, int_compute=False
+    ):
+        """
+        quantize a input tensor
+
+        Args:
+            ctx: pytorch context
+            input (torch.Tensor): input tensor
+            bits (int, optional): how many total bits to use. Defaults to 8.
+            n (int, optional): how many bits to use after the decimal point, support tensor input for channel-wise quantization. Defaults to 5.
+            channel_index (int, optional): which dimension of the input is the channel (used for channel-wise quantization). Defaults to 1.
+            int_compute (bool, optional): whether return int tensor. Defaults to False.
+        """
         limit = 2.0 ** (bits - 1)
         tof = 2.0 ** -n
         toi = 2.0 ** n
         shape = [1 for _ in input.shape]
         if isinstance(n, torch.Tensor) and sum(n.shape) > 1:
+            assert (
+                len(n) == input.shape[channel_index]
+            ), "channel of input and n must be equal in channel-wise quantization"
             shape[channel_index] = -1
             tof, toi = tof.view(*shape), toi.view(*shape)
         ctx.save_for_backward(limit, tof)
@@ -27,6 +43,9 @@ class Quantize(torch.autograd.Function):
 
     @staticmethod
     def backward(ctx, grad_output):
+        """
+        Straight Through Gradient Estimator
+        """
         limit, tof = ctx.saved_tensors
         return grad_output.clamp_(-limit * tof, (limit - 1) * tof)
 
@@ -43,22 +62,30 @@ class QuantizeLayer(nn.Module):
         return quantize(x, self.bits, self.n)
 
 
-def calculate_best_n(tensor, bits):
+def calculate_best_n(tensor: torch.Tensor, bits: int):
+    """
+    calculate the best n for quantizing tensor
+    """
     MIN_VALID_N = 1
     MAX_VALID_N = 15
-    err = float('inf')
+    err = float("inf")
     best_n = None
     tensor = tensor.view(-1)  # flatten
     for n in range(MIN_VALID_N, MAX_VALID_N):
-        tensor_q = quantize(m, bits, n)
-        err_ = torch.sum((tensor - tensor_q)**2).item()
+        tensor_q = quantize(tensor, bits, n)
+        err_ = torch.sum((tensor - tensor_q) ** 2).item()
         if err_ < err:
             best_n = n
             err = err_
     return best_n
 
 
-def merge_bn_conv(conv, bn, test=False):
+def merge_bn_conv(conv: nn.Module, bn: nn.Module, test=False):
+    """
+    merge the weight and bias of bn into the convolution layer  (conv-bn) => (conv)
+
+    return the new weight/bias for the conv layer
+    """
     bn.eval()  # don't forget this !
 
     w = conv.weight.detach()
@@ -83,6 +110,12 @@ def merge_bn_conv(conv, bn, test=False):
 
 
 def merge_bn_deconv(deconv, bn, test=False):
+    """
+    merge the weight and bias of bn into the deconvolution layer  (deconv-bn) => (deconv)
+
+    return the new weight/bias for the deconv layer
+    """
+
     bn.eval()  # don't forget this !
 
     w = deconv.weight.detach()
@@ -107,6 +140,11 @@ def merge_bn_deconv(deconv, bn, test=False):
 
 
 def merge_bn_linear(linear, bn, test=False):
+    """
+    merge the weight and bias of bn into the linear layer  (linear-bn) => (linear)
+
+    return the new weight/bias for the linear layer
+    """
     bn.eval()  # don't forget this !
 
     w = linear.weight.detach()
@@ -139,25 +177,38 @@ class BatchNormQuantizer(nn.Module):
         self,
         # conv/deconv/fc layer
         op,
-
         # batch norm layer
         bn=None,
-
         # quantization parameters
         bits=8,
         nw=6,
         nb=6,
         no=5,
+        ni=5,
         quantize_weight_per_channel=True,
         merge_bn_step=10000,
-
         # debug
-        name='',
-
-        # integer computation for hardware tests
+        name="",
         int_compute=False,
-        ni=-1
     ):
+        """
+        Wrapper layer that can quantize the input (conv-bn, deconv-bn, linear-bn) layers.
+        This quantization method relies on batch norm, which is modified from https://arxiv.org/abs/1712.05877.
+
+        Args:
+            op (nn.Module): conv, deconv, or linear layer
+            bn (nn.Module, optional): batch norm layer. Defaults to None.
+            bits (int, optional): Defaults to 8.
+            nw (int, optional): n of weights. Defaults to 6.
+            nb (int, optional): n of bias. Defaults to 6.
+            no (int, optional): n of output feature. Defaults to 5.
+            ni (int, optional): n of input feature. Defaults to 5.
+            quantize_weight_per_channel (bool, optional): Whether to use channel-wise quantization on weights (nw will become initialization). Defaults to True.
+            merge_bn_step (int, optional): when to merge bn to conv/deconv/linear. Defaults to 10000.
+            name (str, optional): Defaults to ''.
+            int_compute (bool, optional): whether return int feature. Defaults to False.
+        """
+
         super(BatchNormQuantizer, self).__init__()
         # status
         self._init = False
@@ -165,23 +216,40 @@ class BatchNormQuantizer(nn.Module):
         self._n_updates = 0
 
         # internal layer
-        self.op = [op, ]  # wrap it with a list to prevent double reference to the same weight
+        self.op = [
+            op,
+        ]  # wrap it with a list to prevent double reference to the same weight
         self.weight = op.weight
         self.bias = op.bias
 
         if isinstance(op, nn.Conv2d):
             self.F = lambda inp, weight, bias: F.conv2d(
-                inp, weight, bias=bias, stride=op.stride, padding=op.padding, dilation=op.dilation, groups=op.groups)
+                inp,
+                weight,
+                bias=bias,
+                stride=op.stride,
+                padding=op.padding,
+                dilation=op.dilation,
+                groups=op.groups,
+            )
             self.merge_bn = merge_bn_conv
             self.channel_index = 0
         elif isinstance(op, nn.ConvTranspose2d):
+
             def func(inp, weight, bias):
                 if self.int_compute:
                     inp = inp.float()
                     weight = weight.float()
                     bias = bias.float() if bias is not None else bias
                 r = F.conv_transpose2d(
-                    inp, weight, bias=bias, stride=op.stride, padding=op.padding, dilation=op.dilation, groups=op.groups)
+                    inp,
+                    weight,
+                    bias=bias,
+                    stride=op.stride,
+                    padding=op.padding,
+                    dilation=op.dilation,
+                    groups=op.groups,
+                )
                 if self.int_compute:
                     r = r.int()
                 return r
@@ -220,21 +288,62 @@ class BatchNormQuantizer(nn.Module):
 
         if not self._init:
             self.bits = nn.Parameter(
-                torch.tensor(self._bits, dtype=torch.int, requires_grad=False, device=x.device),
+                torch.tensor(
+                    self._bits, dtype=torch.int, requires_grad=False, device=x.device
+                ),
                 requires_grad=False,
             )
             self.no = nn.Parameter(
-                torch.tensor(self._no, dtype=torch.int, requires_grad=False, device=x.device),
+                torch.tensor(
+                    self._no, dtype=torch.int, requires_grad=False, device=x.device
+                ),
+                requires_grad=False,
+            )
+            self.weight_out_channel_index = nn.Parameter(
+                torch.tensor(
+                    self.channel_index,
+                    dtype=torch.int,
+                    requires_grad=False,
+                    device=x.device,
+                ),
+                requires_grad=False,
+            )
+            self.ni = nn.Parameter(
+                torch.tensor(
+                    self._ni, dtype=torch.int, requires_grad=False, device=x.device
+                ),
                 requires_grad=False,
             )
             self.nw = nn.Parameter(
-                torch.tensor(([self._nw, ] * self.weight.shape[self.channel_index]) if self.quantize_weight_per_channel else self._nw,
-                             dtype=torch.int, requires_grad=False, device=x.device),
+                torch.tensor(
+                    (
+                        [
+                            self._nw,
+                        ]
+                        * self.weight.shape[self.channel_index]
+                    )
+                    if self.quantize_weight_per_channel
+                    else self._nw,
+                    dtype=torch.int,
+                    requires_grad=False,
+                    device=x.device,
+                ),
                 requires_grad=False,
             )
             self.nb = nn.Parameter(
-                torch.tensor(([self._nb, ] * self.weight.shape[self.channel_index]) if self.quantize_weight_per_channel else self._nb,
-                             dtype=torch.int, requires_grad=False, device=x.device),
+                torch.tensor(
+                    (
+                        [
+                            self._nb,
+                        ]
+                        * self.weight.shape[self.channel_index]
+                    )
+                    if self.quantize_weight_per_channel
+                    else self._nb,
+                    dtype=torch.int,
+                    requires_grad=False,
+                    device=x.device,
+                ),
                 requires_grad=False,
             )
             self._init = True
@@ -242,29 +351,37 @@ class BatchNormQuantizer(nn.Module):
         if self._n_updates >= self.merge_bn_step:
             if not self._bn_merged:
                 with torch.no_grad():
-                    print(f'[Quantizer] @ {self._n_updates} # {self.name} -> Merge BN')
+                    print(f"[Quantizer] @ {self._n_updates} # {self.name} -> Merge BN")
                     self.op[0].weight = self.weight
                     self.op[0].bias = self.bias
                     weight, bias = self.merge_bn(self.op[0], self.bn)
                     self.weight.data = weight
                     self.bias = nn.Parameter(bias, requires_grad=True)
                     if self.quantize_weight_per_channel:
-                        print(f'[Quantizer] @ {self._n_updates} # {self.name} -> Quantize weights by MSE')
-                        for i in range(weight.shape[0]):
+                        print(
+                            f"[Quantizer] @ {self._n_updates} # {self.name} -> Quantize weights by MSE"
+                        )
+                        for i in range(weight.shape[self.channel_index]):
                             bits = self.bits.item()
-                            ws = calculate_best_n(weight[i] if self.channel_index == 0 else weight[:, i], bits)
+                            ws = calculate_best_n(
+                                weight[i] if self.channel_index == 0 else weight[:, i],
+                                bits,
+                            )
                             bs = calculate_best_n(bias[i], bits)
                             self.nw[i] = ws
                             self.nb[i] = bs
                     self._bn_merged = True
 
         n_m = self.nw + self._ni
-        weight = quantize(self.weight, self.bits, self.nw, self.channel_index, self.int_compute)
+        weight = quantize(
+            self.weight, self.bits, self.nw, self.channel_index, self.int_compute
+        )
         if self.bias is not None:
             bias = quantize(self.bias, self.bits, self.nb, 0, False)
             if self.int_compute:
-                # since this happens in temporary buffer, so bits doesn't matter
-                bias = quantize(bias, torch.tensor(31), n_m, 0, self.int_compute)
+                bias = quantize(
+                    bias, torch.tensor(31), n_m, 0, self.int_compute
+                )  # bias to integer format
         else:
             bias = None
 
@@ -291,17 +408,21 @@ class BatchNormQuantizer(nn.Module):
 if __name__ == "__main__":
     # verify the quantization match between int and float domain, 1 hour today
     x = torch.rand(10)
-    print('========= quantization test (should be quite close) ==========')
+    print("========= quantization test (should be quite close) ==========")
     print(x)
     print(quantize(x, 8, 7))
-    uqx = (quantize(x, 8, 7) * (2**7)).int().float() / (2**7)
-    uqx2 = quantize(x, 8, 7, 0, True).float() / (2**7)
-    print('should be very closed to 0', torch.sum((x - uqx) ** 2), torch.sum((x - uqx2) ** 2))
-    uqx3 = quantize(uqx2, 8, 7, 0, True).float() / (2**7)
-    print('should be 0', torch.sum((uqx2 - uqx3) ** 2))
-    print('\n')
+    uqx = (quantize(x, 8, 7) * (2 ** 7)).int().float() / (2 ** 7)
+    uqx2 = quantize(x, 8, 7, 0, True).float() / (2 ** 7)
+    print(
+        "should be very closed to 0",
+        torch.sum((x - uqx) ** 2),
+        torch.sum((x - uqx2) ** 2),
+    )
+    uqx3 = quantize(uqx2, 8, 7, 0, True).float() / (2 ** 7)
+    print("should be 0", torch.sum((uqx2 - uqx3) ** 2))
+    print("\n")
 
-    print('========= merge bn conv / deconv / fc tests ==========')
+    print("========= merge bn conv / deconv / fc tests ==========")
     bn = nn.BatchNorm2d(3)
     bn.weight.data = torch.rand(*bn.weight.shape)
     bn.bias.data = torch.rand(*bn.bias.shape)
@@ -320,9 +441,9 @@ if __name__ == "__main__":
     deconv = nn.ConvTranspose2d(in_channels=3, out_channels=3, kernel_size=3, stride=2)
     merge_bn_deconv(deconv, bn, test=True)
 
-    print('\n')
+    print("\n")
 
-    print('========= quantized conv / deconv / fc tests ==========')
+    print("========= quantized conv / deconv / fc tests ==========")
     inp_conv = torch.rand(1, 10, 32, 32)
     inp_fc = torch.rand(1, 10)
 
@@ -337,10 +458,12 @@ if __name__ == "__main__":
             n_out = 5
             inp = quantize(inp, 8, n_inp)
             inpi = quantize(inp, 8, n_inp, 0, True)
+            # net = nn.Sequential([conv1, bn1, conv2, bn2])
+            # net = nn.Sequential([BatchNormQuantizer(conv1, bn1), BatchNormQuantizer(conv2, bn2)])
             mod = BatchNormQuantizer(op, no=n_out, ni=n_inp)
             out_f = mod(inp)
             mod.int()
             out_i = mod(inpi)
-            print('should be 0', torch.sum((out_i - out_f * (2 ** n_out)) ** 2))
+            print("should be 0", torch.sum((out_i - out_f * (2 ** n_out)) ** 2))
 
-    print('\n')
+    print("\n")
