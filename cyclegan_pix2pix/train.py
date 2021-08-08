@@ -113,8 +113,3 @@ if __name__ == "__main__":
             % (epoch, opt.n_epochs + opt.n_epochs_decay, time.time() - epoch_start_time)
         )
         model.update_learning_rate()  # update learning rates in the beginning of every epoch.
-
-        """
-        /usr/local/lib/python3.7/dist-packages/torch/optim/lr_scheduler.py:134: UserWarning: Detected call of `lr_scheduler.step()` before `optimizer.step()`. In PyTorch 1.1.0 and later, you should call them in the opposite order: `optimizer.step()` before `lr_scheduler.step()`.  Failure to do this will result in PyTorch skipping the first value of the learning rate schedule. See more details at https://pytorch.org/docs/stable/optim.html#how-to-adjust-learning-rate
-  "https://pytorch.org/docs/stable/optim.html#how-to-adjust-learning-rate", UserWarning)
-        """

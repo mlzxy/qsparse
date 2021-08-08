@@ -78,17 +78,6 @@ def get_params(opt, size):
 
     return {'crop_pos': (x, y), 'flip': flip}
 
-# https://github.com/jolibrain/joliGAN/pull/31
-"""
-/usr/local/lib/python3.6/dist-packages/torchvision/transforms/functional.py:365: UserWarning: Argument interpolation should be of type InterpolationMode instead of int. Please, use InterpolationMode enum.
-  "Argument interpolation should be of type InterpolationMode instead of int. "
-/usr/local/lib/python3.6/dist-packages/torchvision/transforms/functional.py:365: UserWarning: Argument interpolation should be of type InterpolationMode instead of int. Please, use InterpolationMode enum.
-  "Argument interpolation should be of type InterpolationMode instead of int. "
-/usr/local/lib/python3.6/dist-packages/torchvision/transforms/functional.py:365: UserWarning: Argument interpolation should be of type InterpolationMode instead of int. Please, use InterpolationMode enum.
-  "Argument interpolation should be of type InterpolationMode instead of int. "
-/usr/local/lib/python3.6/dist-packages/torchvision/transforms/functional.py:365: UserWarning: Argument interpolation should be of type InterpolationMode instead of int. Please, use InterpolationMode enum.
-  "Argument interpolation should be of type InterpolationMode instead of int. "
-"""
 def get_transform(opt, params=None, grayscale=False, method=InterpolationMode.BICUBIC, convert=True):
     transform_list = []
     if grayscale:
