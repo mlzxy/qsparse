@@ -8,6 +8,7 @@ import torch.utils.data as data
 from PIL import Image
 import torchvision.transforms as transforms
 from abc import ABC, abstractmethod
+from torchvision.transforms import InterpolationMode
 
 
 class BaseDataset(data.Dataset, ABC):
@@ -77,14 +78,24 @@ def get_params(opt, size):
 
     return {'crop_pos': (x, y), 'flip': flip}
 
-
-def get_transform(opt, params=None, grayscale=False, method=Image.BICUBIC, convert=True):
+# https://github.com/jolibrain/joliGAN/pull/31
+"""
+/usr/local/lib/python3.6/dist-packages/torchvision/transforms/functional.py:365: UserWarning: Argument interpolation should be of type InterpolationMode instead of int. Please, use InterpolationMode enum.
+  "Argument interpolation should be of type InterpolationMode instead of int. "
+/usr/local/lib/python3.6/dist-packages/torchvision/transforms/functional.py:365: UserWarning: Argument interpolation should be of type InterpolationMode instead of int. Please, use InterpolationMode enum.
+  "Argument interpolation should be of type InterpolationMode instead of int. "
+/usr/local/lib/python3.6/dist-packages/torchvision/transforms/functional.py:365: UserWarning: Argument interpolation should be of type InterpolationMode instead of int. Please, use InterpolationMode enum.
+  "Argument interpolation should be of type InterpolationMode instead of int. "
+/usr/local/lib/python3.6/dist-packages/torchvision/transforms/functional.py:365: UserWarning: Argument interpolation should be of type InterpolationMode instead of int. Please, use InterpolationMode enum.
+  "Argument interpolation should be of type InterpolationMode instead of int. "
+"""
+def get_transform(opt, params=None, grayscale=False, method=InterpolationMode.BICUBIC, convert=True):
     transform_list = []
     if grayscale:
         transform_list.append(transforms.Grayscale(1))
     if 'resize' in opt.preprocess:
         osize = [opt.load_size, opt.load_size]
-        transform_list.append(transforms.Resize(osize, method))
+        transform_list.append(transforms.Resize(osize, interpolation=method))
     elif 'scale_width' in opt.preprocess:
         transform_list.append(transforms.Lambda(lambda img: __scale_width(img, opt.load_size, opt.crop_size, method)))
 
@@ -112,7 +123,7 @@ def get_transform(opt, params=None, grayscale=False, method=Image.BICUBIC, conve
     return transforms.Compose(transform_list)
 
 
-def __make_power_2(img, base, method=Image.BICUBIC):
+def __make_power_2(img, base, method=InterpolationMode.BICUBIC):
     ow, oh = img.size
     h = int(round(oh / base) * base)
     w = int(round(ow / base) * base)
@@ -120,16 +131,16 @@ def __make_power_2(img, base, method=Image.BICUBIC):
         return img
 
     __print_size_warning(ow, oh, w, h)
-    return img.resize((w, h), method)
+    return img.resize((w, h), interpolation=method)
 
 
-def __scale_width(img, target_size, crop_size, method=Image.BICUBIC):
+def __scale_width(img, target_size, crop_size, method=InterpolationMode.BICUBIC):
     ow, oh = img.size
     if ow == target_size and oh >= crop_size:
         return img
     w = target_size
     h = int(max(target_size * oh / ow, crop_size))
-    return img.resize((w, h), method)
+    return img.resize((w, h), interpolation=method)
 
 
 def __crop(img, pos, size):
