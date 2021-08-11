@@ -46,8 +46,6 @@ if __name__ == "__main__":
     )  # create a visualizer that display/save images and plots
     total_iters = 0  # the total number of training iterations
 
-
-
     for epoch in range(
         opt.epoch_count, opt.n_epochs + opt.n_epochs_decay + 1
     ):  # outer loop for different epochs; we save the model by <epoch_count>, <epoch_count>+<save_latest_freq>
@@ -88,7 +86,7 @@ if __name__ == "__main__":
                         epoch, float(epoch_iter) / dataset_size, losses
                     )
 
-            if (
+            if opt.save_latest_freq > 0 and (
                 total_iters % opt.save_latest_freq == 0
             ):  # cache our latest model every <save_latest_freq> iterations
                 print(
@@ -99,7 +97,7 @@ if __name__ == "__main__":
                 model.save_networks(save_suffix)
 
             iter_data_time = time.time()
-        if (
+        if opt.save_epoch_freq > 0 and (
             epoch % opt.save_epoch_freq == 0
         ):  # cache our model every <save_epoch_freq> epochs
             print(

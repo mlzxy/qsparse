@@ -64,13 +64,13 @@ class TrainOptions(BaseOptions):
         parser.add_argument(
             "--save_latest_freq",
             type=int,
-            default=5000,
+            default=-1,
             help="frequency of saving the latest results",
         )
         parser.add_argument(
             "--save_epoch_freq",
             type=int,
-            default=5,
+            default=-1,
             help="frequency of saving checkpoints at the end of epochs",
         )
         parser.add_argument(

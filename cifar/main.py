@@ -17,7 +17,7 @@ from cifar.utils import progress_bar
 
 parser = argparse.ArgumentParser(description='PyTorch CIFAR10 Training')
 parser.add_argument('--lr', default=0.1, type=float, help='learning rate')
-parser.add_argument('--no-ckpt', default=False, action='store_true')
+parser.add_argument('--ckpt', default=False, action='store_true')
 parser.add_argument('--resume', '-r', action='store_true',
                     help='resume from checkpoint')
 parser.add_argument('--sparse', default="")
@@ -159,12 +159,10 @@ def test(epoch):
             'epoch': epoch,
         }
         best_acc = acc
-        if args.no_ckpt:
-            pass
-        else:
-            if not os.path.isdir('checkpoint'):
-                os.mkdir('checkpoint')
-            name = 'ckpt-sparse.pth' if args.sparse else 'ckpt.pth'
+        if not os.path.isdir('checkpoint'):
+            os.mkdir('checkpoint')
+        name = 'ckpt-sparse.pth' if args.sparse else 'ckpt.pth'
+        if args.ckpt:
             torch.save(state, f'./checkpoint/{name}')
 
 
