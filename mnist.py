@@ -5,20 +5,23 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 from sparse import SparseLayer
+from quantize import BatchNormQuantizer, quantize
 from termcolor import colored
 from torchvision import datasets, transforms
 from torch.optim.lr_scheduler import StepLR
 
 
 class Net(nn.Module):
-    def __init__(self, sparse=False):
+    def __init__(self, sparse=False, quantize=False):
         super(Net, self).__init__()
         self.sparse = sparse
+        self.quantize = quantize
         sp_kwargs = dict(
             sparsity=0.5,
             prune_freq=1000,  # the epoch size happens to close to 1000. need to tweak this value per application
             start_steps=1000,
             n_prunes=5,
+            buffer_size=2
         )
 
         def identity(x):
@@ -34,14 +37,25 @@ class Net(nn.Module):
             SparseLayer(**sp_kwargs, name="fc1_pruning") if sparse else identity
         )
 
-        self.conv1 = nn.Conv2d(1, 32, 3, 1)
-        self.conv2 = nn.Conv2d(32, 64, 3, 1)
+        def quantize_wrapper(*args):
+            if self.quantize:
+                print('using quantization!')
+                return BatchNormQuantizer(args[0], bn=args[1], merge_bn_step=2000)
+            else:
+                return nn.Sequential(*args)
+
+        self.conv1 = quantize_wrapper(nn.Conv2d(1, 32, 3, 1), nn.BatchNorm2d(32))
+        self.conv2 = quantize_wrapper(nn.Conv2d(32, 64, 3, 1), nn.BatchNorm2d(64))
+        self.fc1 = quantize_wrapper(nn.Linear(9216, 128), nn.BatchNorm1d(128))
+
         self.dropout1 = nn.Dropout(0.25)
         self.dropout2 = nn.Dropout(0.5)
-        self.fc1 = nn.Linear(9216, 128)
         self.fc2 = nn.Linear(128, 10)
 
     def forward(self, x):
+        if self.quantize:
+            x = quantize(x, 8, 5)
+
         x = self.conv1(x)
         x = self.conv1_sp(x)
         x = F.relu(x)
@@ -51,6 +65,7 @@ class Net(nn.Module):
         x = F.max_pool2d(x, 2)
         x = self.dropout1(x)
         x = torch.flatten(x, 1)
+
         x = self.fc1(x)
         x = self.fc1_sp(x)
         x = F.relu(x)
@@ -180,6 +195,13 @@ def main():
         default=False,
         help="whether use sparse training",
     )
+    parser.add_argument(
+        "--quantize",
+        action="store_true",
+        default=False,
+        help="whether use quantization"
+    )
+
     args = parser.parse_args()
     use_cuda = not args.no_cuda and torch.cuda.is_available()
 
@@ -203,7 +225,7 @@ def main():
     test_loader = torch.utils.data.DataLoader(dataset2, **test_kwargs)
     if args.sparse:
         print(colored("use sparse", "red"))
-    model = Net(sparse=args.sparse).to(device)
+    model = Net(sparse=args.sparse, quantize=args.quantize).to(device)
     optimizer = optim.Adadelta(model.parameters(), lr=args.lr)
     print(colored(f"training epoch size = {len(train_loader)}", "red"))
     scheduler = StepLR(optimizer, step_size=1, gamma=args.gamma)

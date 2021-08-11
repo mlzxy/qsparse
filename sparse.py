@@ -18,6 +18,7 @@ class _InternalSparseFunc(torch.autograd.Function):
             mask,
             cur_sparsity,
             n_updates,
+            buffer,
             final_sparsity,
             prune_freq,
             start_steps,
@@ -32,7 +33,7 @@ class _InternalSparseFunc(torch.autograd.Function):
                 )
                 cur_sparsity = final_sparsity * (1 - ratio)
                 # update mask
-                saliency = x.abs().mean(dim=0)
+                saliency = torch.cat([v.view(1, *v.shape) for v in buffer], dim=0).abs().mean(dim=0).to(x.device)
                 values = saliency.flatten().sort()[0]
                 n = prod(saliency.shape)
                 idx = max(int(cur_sparsity * n - 1), 0)
@@ -41,7 +42,7 @@ class _InternalSparseFunc(torch.autograd.Function):
                 mask[:] = new_mask
                 valid_ratio = mask.sum().item() / n
                 print(
-                    f"[SparseLayer @ {n_updates} # {name}] valid {valid_ratio:.02f}, sparse {1 - valid_ratio:.02f}"
+                    f"[SparseLayer @ {n_updates} # {name}] valid {valid_ratio:.02f}, sparse {1 - valid_ratio:.02f}, buffer_size = {len(buffer)}"
                 )
         ctx.save_for_backward(mask)
         return (
@@ -65,7 +66,9 @@ class _InternalSparseFunc(torch.autograd.Function):
 
 
 class SparseLayer(nn.Module):
-    """ Custom layer that gradually applies a binary sparse mask on input"""
+    """ Custom layer that gradually applies a binary sparse mask on input
+        H x W 
+    """
 
     def __init__(
         self,
@@ -74,18 +77,17 @@ class SparseLayer(nn.Module):
         start_steps=1000,
         n_prunes=4,
         name="",
-        gamma=0,
+        buffer_size=1,
+        **kwargs
     ):
         """
-
-        bt + bt-1 * gamma + bt-2 * gamma^2 + ...
 
         Args:
             sparsity (float, optional): target sparse ratio, the larger, the more zeros we have. Defaults to 0.5.
             prune_freq (int, optional): how many steps between each pruning stage. Defaults to 1000.
             start_steps (int, optional): when to start pruning. Defaults to 1000.
             n_prunes (int, optional): how many pruning stages. Defaults to 4.
-            gamma (int, optional): how much weight to assign for history batch at every step. Default to 0 (only use current batch).
+            buffer_size (int, optional): how much history batch to keep
         """
 
         super().__init__()
@@ -95,7 +97,9 @@ class SparseLayer(nn.Module):
         self.prune_freq = prune_freq
         self.start_steps = start_steps
         self.n_prunes = n_prunes
-        self.gamma = gamma
+        self.buffer_size = buffer_size
+        assert buffer_size > 0
+        self.buffer = deque(maxlen=self.buffer_size)
         self.name = name
 
         self._cur_sparsity = 0
@@ -113,12 +117,15 @@ class SparseLayer(nn.Module):
             )
             self._init = True
 
+        self.buffer.append(x.detach().abs().mean(dim=0).to('cpu'))  # compute saliency, to cpu, then store in buffer
+
         spx, new_mask, new_sparsity = self.func(
             x,
             [
                 self.mask,
                 self._cur_sparsity,
                 self._n_updates,
+                self.buffer,
                 self.final_sparsity,
                 self.prune_freq,
                 self.start_steps,

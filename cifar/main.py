@@ -21,6 +21,7 @@ parser.add_argument('--no-ckpt', default=False, action='store_true')
 parser.add_argument('--resume', '-r', action='store_true',
                     help='resume from checkpoint')
 parser.add_argument('--sparse', default="")
+parser.add_argument('--quantize_step', type=int, default=-1)  # when <= 0, then no quantization
 args = parser.parse_args()
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -54,13 +55,21 @@ testloader = torch.utils.data.DataLoader(
 classes = ('plane', 'car', 'bird', 'cat', 'deer',
            'dog', 'frog', 'horse', 'ship', 'truck')
 
-print(f"==> Train Epoch Size ({len(trainloader)})")  # 391, useful to designing sparsifying schedule
+
 # Model
 print('==> Building model..')
 # net = VGG('VGG19')
+EPOCH = 200
+if args.quantize_step > 0:
+    print('===> Use Quantization')
+    EPOCH = 300
+
+print(f"==> Train Epoch Size ({len(trainloader)})")  # 391, useful to designing sparsifying schedule
+print(f"==> Train Num Steps ({EPOCH * len(trainloader)})")
+
 if args.sparse:
     print(f'==> Use Sparse {args.sparse}')
-    net = SparseResNet18(**eval(f'dict({args.sparse})'))
+    net = SparseResNet18(**eval(f'dict({args.sparse})'), quantize_step=args.quantize_step)
 else:
     net = ResNet18()
 # net = PreActResNet18()
@@ -155,12 +164,11 @@ def test(epoch):
         else:
             if not os.path.isdir('checkpoint'):
                 os.mkdir('checkpoint')
-            name = 'ckpt-sparse.pth' if args.sparse else 'ckpt.pth' 
+            name = 'ckpt-sparse.pth' if args.sparse else 'ckpt.pth'
             torch.save(state, f'./checkpoint/{name}')
 
 
-
-for epoch in range(start_epoch, start_epoch+200):
+for epoch in range(start_epoch, start_epoch+EPOCH):
     train(epoch)
     test(epoch)
     scheduler.step()

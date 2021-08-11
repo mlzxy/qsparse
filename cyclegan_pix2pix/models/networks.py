@@ -91,7 +91,8 @@ def init_weights(net, init_type='normal', init_gain=0.02):
                 raise NotImplementedError('initialization method [%s] is not implemented' % init_type)
             if hasattr(m, 'bias') and m.bias is not None:
                 init.constant_(m.bias.data, 0.0)
-        elif classname.find('BatchNorm2d') != -1:  # BatchNorm Layer's weight is not a matrix; only normal distribution applies.
+        # BatchNorm Layer's weight is not a matrix; only normal distribution applies.
+        elif classname.find('BatchNorm2d') != -1:
             init.normal_(m.weight.data, 1.0, init_gain)
             init.constant_(m.bias.data, 0.0)
 
@@ -117,7 +118,7 @@ def init_net(net, init_type='normal', init_gain=0.02, gpu_ids=[]):
     return net
 
 
-def define_G(input_nc, output_nc, ngf, netG, norm='batch', use_dropout=False, init_type='normal', init_gain=0.02, gpu_ids=[], sparse_kwargs: dict=None):
+def define_G(input_nc, output_nc, ngf, netG, norm='batch', use_dropout=False, init_type='normal', init_gain=0.02, gpu_ids=[], sparse_kwargs: dict = None):
     """Create a generator
 
     Parameters:
@@ -148,13 +149,17 @@ def define_G(input_nc, output_nc, ngf, netG, norm='batch', use_dropout=False, in
     norm_layer = get_norm_layer(norm_type=norm)
 
     if netG == 'resnet_9blocks':
-        net = ResnetGenerator(input_nc, output_nc, ngf, norm_layer=norm_layer, use_dropout=use_dropout, n_blocks=9, sparse_kwargs=sparse_kwargs)
+        net = ResnetGenerator(input_nc, output_nc, ngf, norm_layer=norm_layer,
+                              use_dropout=use_dropout, n_blocks=9, sparse_kwargs=sparse_kwargs)
     elif netG == 'resnet_6blocks':
-        net = ResnetGenerator(input_nc, output_nc, ngf, norm_layer=norm_layer, use_dropout=use_dropout, n_blocks=6, sparse_kwargs=sparse_kwargs)
+        net = ResnetGenerator(input_nc, output_nc, ngf, norm_layer=norm_layer,
+                              use_dropout=use_dropout, n_blocks=6, sparse_kwargs=sparse_kwargs)
     elif netG == 'unet_128':
-        net = UnetGenerator(input_nc, output_nc, 7, ngf, norm_layer=norm_layer, use_dropout=use_dropout, sparse_kwargs=sparse_kwargs)
+        net = UnetGenerator(input_nc, output_nc, 7, ngf, norm_layer=norm_layer,
+                            use_dropout=use_dropout, sparse_kwargs=sparse_kwargs)
     elif netG == 'unet_256':
-        net = UnetGenerator(input_nc, output_nc, 8, ngf, norm_layer=norm_layer, use_dropout=use_dropout,sparse_kwargs=sparse_kwargs)
+        net = UnetGenerator(input_nc, output_nc, 8, ngf, norm_layer=norm_layer,
+                            use_dropout=use_dropout, sparse_kwargs=sparse_kwargs)
     else:
         raise NotImplementedError('Generator model name [%s] is not recognized' % netG)
     return init_net(net, init_type, init_gain, gpu_ids)
@@ -297,7 +302,8 @@ def cal_gradient_penalty(netD, real_data, fake_data, device, type='mixed', const
             interpolatesv = fake_data
         elif type == 'mixed':
             alpha = torch.rand(real_data.shape[0], 1, device=device)
-            alpha = alpha.expand(real_data.shape[0], real_data.nelement() // real_data.shape[0]).contiguous().view(*real_data.shape)
+            alpha = alpha.expand(real_data.shape[0], real_data.nelement() //
+                                 real_data.shape[0]).contiguous().view(*real_data.shape)
             interpolatesv = alpha * real_data + ((1 - alpha) * fake_data)
         else:
             raise NotImplementedError('{} not implemented'.format(type))
@@ -344,7 +350,7 @@ class ResnetGenerator(nn.Module):
         model = [nn.ReflectionPad2d(3),
                  nn.Conv2d(input_nc, ngf, kernel_size=7, padding=0, bias=use_bias),
                  norm_layer(ngf),
-                 SparseLayer(**sparse_kwargs, name='sp_conv1') if use_sparse else nn.Identity(), 
+                 SparseLayer(**sparse_kwargs, name='sp_conv1') if use_sparse else nn.Identity(),
                  nn.ReLU(True)]
 
         n_downsampling = 2
@@ -352,12 +358,13 @@ class ResnetGenerator(nn.Module):
             mult = 2 ** i
             model += [nn.Conv2d(ngf * mult, ngf * mult * 2, kernel_size=3, stride=2, padding=1, bias=use_bias),
                       norm_layer(ngf * mult * 2),
-                      SparseLayer(**sparse_kwargs, name=f'sp_conv_ds_{i}') if use_sparse else nn.Identity(), 
+                      SparseLayer(**sparse_kwargs, name=f'sp_conv_ds_{i}') if use_sparse else nn.Identity(),
                       nn.ReLU(True)]
 
         mult = 2 ** n_downsampling
         for i in range(n_blocks):       # add ResNet blocks
-            model += [ResnetBlock(ngf * mult, padding_type=padding_type, norm_layer=norm_layer, use_dropout=use_dropout, use_bias=use_bias, sparse_kwargs=sparse_kwargs, name=f'res_block_{i}')]
+            model += [ResnetBlock(ngf * mult, padding_type=padding_type, norm_layer=norm_layer,
+                                  use_dropout=use_dropout, use_bias=use_bias, sparse_kwargs=sparse_kwargs, name=f'res_block_{i}')]
 
         for i in range(n_downsampling):  # add upsampling layers
             mult = 2 ** (n_downsampling - i)
@@ -366,7 +373,7 @@ class ResnetGenerator(nn.Module):
                                          padding=1, output_padding=1,
                                          bias=use_bias),
                       norm_layer(int(ngf * mult / 2)),
-                      SparseLayer(**sparse_kwargs, name=f'sp_conv_us_{i}') if use_sparse else nn.Identity(), 
+                      SparseLayer(**sparse_kwargs, name=f'sp_conv_us_{i}') if use_sparse else nn.Identity(),
                       nn.ReLU(True)]
         model += [nn.ReflectionPad2d(3)]
         model += [nn.Conv2d(ngf, output_nc, kernel_size=7, padding=0)]
@@ -420,7 +427,7 @@ class ResnetBlock(nn.Module):
         else:
             raise NotImplementedError('padding [%s] is not implemented' % padding_type)
 
-        conv_block += [nn.Conv2d(dim, dim, kernel_size=3, padding=p, bias=use_bias), norm_layer(dim), 
+        conv_block += [nn.Conv2d(dim, dim, kernel_size=3, padding=p, bias=use_bias), norm_layer(dim),
                        SparseLayer(**self.sparse_kwargs, name=self.name + '_conv1') if self.use_sparse else nn.Identity(), nn.ReLU(True)]
         if use_dropout:
             conv_block += [nn.Dropout(0.5)]
@@ -463,14 +470,20 @@ class UnetGenerator(nn.Module):
         """
         super(UnetGenerator, self).__init__()
         # construct unet structure
-        unet_block = UnetSkipConnectionBlock(ngf * 8, ngf * 8, input_nc=None, submodule=None, norm_layer=norm_layer, innermost=True, sparse_kwargs=sparse_kwargs)  # add the innermost layer
+        unet_block = UnetSkipConnectionBlock(ngf * 8, ngf * 8, input_nc=None, submodule=None,
+                                             norm_layer=norm_layer, innermost=True, sparse_kwargs=sparse_kwargs)  # add the innermost layer
         for i in range(num_downs - 5):          # add intermediate layers with ngf * 8 filters
-            unet_block = UnetSkipConnectionBlock(ngf * 8, ngf * 8, input_nc=None, submodule=unet_block, norm_layer=norm_layer, use_dropout=use_dropout, sparse_kwargs=sparse_kwargs)
+            unet_block = UnetSkipConnectionBlock(ngf * 8, ngf * 8, input_nc=None, submodule=unet_block,
+                                                 norm_layer=norm_layer, use_dropout=use_dropout, sparse_kwargs=sparse_kwargs)
         # gradually reduce the number of filters from ngf * 8 to ngf
-        unet_block = UnetSkipConnectionBlock(ngf * 4, ngf * 8, input_nc=None, submodule=unet_block, norm_layer=norm_layer, sparse_kwargs=sparse_kwargs)
-        unet_block = UnetSkipConnectionBlock(ngf * 2, ngf * 4, input_nc=None, submodule=unet_block, norm_layer=norm_layer, sparse_kwargs=sparse_kwargs)
-        unet_block = UnetSkipConnectionBlock(ngf, ngf * 2, input_nc=None, submodule=unet_block, norm_layer=norm_layer, sparse_kwargs=sparse_kwargs)
-        self.model = UnetSkipConnectionBlock(output_nc, ngf, input_nc=input_nc, submodule=unet_block, outermost=True, norm_layer=norm_layer, sparse_kwargs=sparse_kwargs)  # add the outermost layer
+        unet_block = UnetSkipConnectionBlock(ngf * 4, ngf * 8, input_nc=None,
+                                             submodule=unet_block, norm_layer=norm_layer, sparse_kwargs=sparse_kwargs)
+        unet_block = UnetSkipConnectionBlock(ngf * 2, ngf * 4, input_nc=None,
+                                             submodule=unet_block, norm_layer=norm_layer, sparse_kwargs=sparse_kwargs)
+        unet_block = UnetSkipConnectionBlock(ngf, ngf * 2, input_nc=None,
+                                             submodule=unet_block, norm_layer=norm_layer, sparse_kwargs=sparse_kwargs)
+        self.model = UnetSkipConnectionBlock(output_nc, ngf, input_nc=input_nc, submodule=unet_block,
+                                             outermost=True, norm_layer=norm_layer, sparse_kwargs=sparse_kwargs)  # add the outermost layer
 
     def forward(self, input):
         """Standard forward"""
@@ -511,7 +524,6 @@ class UnetSkipConnectionBlock(nn.Module):
         downnorm = norm_layer(inner_nc)
         uprelu = nn.ReLU(True)
         upnorm = norm_layer(outer_nc)
-
 
         def get_sparse_layer():
             print('Sparse = ', sparse_kwargs is not None, sparse_kwargs)
@@ -592,7 +604,8 @@ class NLayerDiscriminator(nn.Module):
             nn.LeakyReLU(0.2, True)
         ]
 
-        sequence += [nn.Conv2d(ndf * nf_mult, 1, kernel_size=kw, stride=1, padding=padw)]  # output 1 channel prediction map
+        sequence += [nn.Conv2d(ndf * nf_mult, 1, kernel_size=kw, stride=1, padding=padw)
+                     ]  # output 1 channel prediction map
         self.model = nn.Sequential(*sequence)
 
     def forward(self, input):

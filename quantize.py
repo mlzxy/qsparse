@@ -4,6 +4,13 @@ import torch.nn.functional as F
 from copy import deepcopy
 
 
+def ensure_tensor(v):
+    if isinstance(v, torch.Tensor):
+        return v
+    else:
+        return torch.tensor(v)
+
+
 class Quantize(torch.autograd.Function):
     @staticmethod
     def forward(
@@ -30,7 +37,7 @@ class Quantize(torch.autograd.Function):
             ), "channel of input and n must be equal in channel-wise quantization"
             shape[channel_index] = -1
             tof, toi = tof.view(*shape), toi.view(*shape)
-        ctx.save_for_backward(limit, tof)
+        ctx.save_for_backward(ensure_tensor(limit), ensure_tensor(tof))
         q = (input * toi).int()
         q.clamp_(-limit, limit - 1)
         if int_compute:
@@ -47,7 +54,9 @@ class Quantize(torch.autograd.Function):
         Straight Through Gradient Estimator
         """
         limit, tof = ctx.saved_tensors
-        return grad_output.clamp_(-limit * tof, (limit - 1) * tof)
+        v = grad_output.clamp_(-limit * tof, (limit - 1) * tof)
+        v[v != grad_output] = 0
+        return (v, None, None, None, None)
 
 
 quantize = Quantize.apply
@@ -190,6 +199,7 @@ class BatchNormQuantizer(nn.Module):
         # debug
         name="",
         int_compute=False,
+        no_quantize_output=False
     ):
         """
         Wrapper layer that can quantize the input (conv-bn, deconv-bn, linear-bn) layers.
@@ -274,6 +284,7 @@ class BatchNormQuantizer(nn.Module):
         self._nb = nb
         self._ni = ni
         self._bits = bits
+        self.no_quantize_output = no_quantize_output
         self.quantize_weight_per_channel = quantize_weight_per_channel
         self.int_compute = int_compute
 
@@ -373,36 +384,53 @@ class BatchNormQuantizer(nn.Module):
                     self._bn_merged = True
 
         n_m = self.nw + self._ni
-        weight = quantize(
-            self.weight, self.bits, self.nw, self.channel_index, self.int_compute
-        )
-        if self.bias is not None:
-            bias = quantize(self.bias, self.bits, self.nb, 0, False)
-            if self.int_compute:
-                bias = quantize(
-                    bias, torch.tensor(31), n_m, 0, self.int_compute
-                )  # bias to integer format
-        else:
-            bias = None
+        weight = self.weight
+        bias = self.bias
+
+        if self._bn_merged:
+            weight = quantize(
+                weight, self.bits, self.nw, self.channel_index, self.int_compute
+            )
+            if self.bias is not None:
+                bias = quantize(bias, self.bits, self.nb, 0, False)
+                if self.int_compute:
+                    bias = quantize(
+                        bias, torch.tensor(31), n_m, 0, self.int_compute
+                    )  # bias to integer format
+            else:
+                bias = None
 
         out = self.F(x, weight, bias)
         if not self.int_compute:
             if (not self._bn_merged) and (self.bn is not None):
                 out = self.bn(out)
-        out = quantize(out, self.bits, self.no, 0, self.int_compute)
 
-        if self.int_compute:
-            nw = self.nw.detach()
-            n_diff = n_m - self._no
-            if self.quantize_weight_per_channel:
-                for i in range(out.shape[1]):
-                    out[:, i] = (out[:, i].float() / (2 ** n_diff[i].item())).int()
-            else:
-                out = out >> n_diff.item()
+        if not self.no_quantize_output:
+            out = quantize(out, self.bits, self.no, 0, self.int_compute)
+
+            if self.int_compute:
+                nw = self.nw.detach()
+                n_diff = n_m - self._no
+                if self.quantize_weight_per_channel:
+                    for i in range(out.shape[1]):
+                        out[:, i] = (out[:, i].float() / (2 ** n_diff[i].item())).int()
+                else:
+                    out = out >> n_diff.item()
+        else:
+            # Warning: need to handle quantization outside, usually the case is resnet
+            pass
 
         if self.training:
             self._n_updates += 1
         return out
+
+
+def quantize_sequential(*args, **kwargs):
+    if kwargs.get('merge_bn_step', 0) > 0:
+        print(f'use quantization! {kwargs}')
+        return BatchNormQuantizer(args[0], bn=args[1], **kwargs)
+    else:
+        return nn.Sequential(*args)
 
 
 if __name__ == "__main__":
