@@ -5,7 +5,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 from sparse import SparseLayer
-from quantize import BatchNormQuantizer, quantize
+from quantize import BatchNormQuantizer, quantize, QuantizeLayer
 from termcolor import colored
 from torchvision import datasets, transforms
 from torch.optim.lr_scheduler import StepLR
@@ -21,7 +21,7 @@ class Net(nn.Module):
             prune_freq=1000,  # the epoch size happens to close to 1000. need to tweak this value per application
             start_steps=1000,
             n_prunes=5,
-            buffer_size=2
+            buffer_size=2,
         )
 
         def identity(x):
@@ -39,8 +39,10 @@ class Net(nn.Module):
 
         def quantize_wrapper(*args):
             if self.quantize:
-                print('using quantization!')
-                return BatchNormQuantizer(args[0], bn=args[1], merge_bn_step=2000)
+                print("using quantization!")
+                return BatchNormQuantizer(
+                    args[0], bn=args[1] if len(args) > 1 else None, merge_bn_step=2000
+                )
             else:
                 return nn.Sequential(*args)
 
@@ -50,11 +52,13 @@ class Net(nn.Module):
 
         self.dropout1 = nn.Dropout(0.25)
         self.dropout2 = nn.Dropout(0.5)
+        # self.fc2 = quantize_wrapper(nn.Linear(128, 10))  # last layer is magic
         self.fc2 = nn.Linear(128, 10)
+        self.qin = QuantizeLayer(bits=8, buffer_size=12, quantize_step=250)
 
     def forward(self, x):
         if self.quantize:
-            x = quantize(x, 8, 5)
+            x = self.qin(x)
 
         x = self.conv1(x)
         x = self.conv1_sp(x)
@@ -199,7 +203,7 @@ def main():
         "--quantize",
         action="store_true",
         default=False,
-        help="whether use quantization"
+        help="whether use quantization",
     )
 
     args = parser.parse_args()

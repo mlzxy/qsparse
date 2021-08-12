@@ -1,4 +1,5 @@
 import torch
+from collections import deque
 from torch import nn
 import torch.nn.functional as F
 from copy import deepcopy
@@ -63,20 +64,43 @@ quantize = Quantize.apply
 
 
 class QuantizeLayer(nn.Module):
-    def __init__(self, bits=8, n=5):
+    def __init__(self, bits=8, n=5, buffer_size=1, quantize_step=-1):
+        super().__init__()
         self.bits = bits
-        self.n = n
+        self.quantize_step = quantize_step
+        self._n_updates = 0
+        self.buffer = deque(maxlen=buffer_size)
+        self.n = nn.Parameter(torch.tensor(n), requires_grad=False)
 
     def forward(self, x):
-        return quantize(x, self.bits, self.n)
+        if self.quantize_step <= 0:
+            return quantize(x, self.bits, self.n)
+        else:
+            out = x
+            if self._n_updates <= self.quantize_step:
+                self.buffer.append(x.detach().to("cpu"))
+            if self._n_updates == self.quantize_step:
+                n = calculate_best_n(
+                    torch.cat([a for a in self.buffer], dim=0),
+                    self.bits,
+                    MIN_VALID_N=1,
+                    MAX_VALID_N=self.bits - 1,
+                )
+                print(f"calculating best n for activation => {n}")
+                self.n.data = torch.tensor(n)
+
+            if self._n_updates >= self.quantize_step:
+                out = quantize(out, self.bits, self.n)
+
+            if self.training:
+                self._n_updates += 1
+            return out
 
 
-def calculate_best_n(tensor: torch.Tensor, bits: int):
+def calculate_best_n(tensor: torch.Tensor, bits: int, MIN_VALID_N=1, MAX_VALID_N=15):
     """
     calculate the best n for quantizing tensor
     """
-    MIN_VALID_N = 1
-    MAX_VALID_N = 15
     err = float("inf")
     best_n = None
     tensor = tensor.view(-1)  # flatten
@@ -199,7 +223,7 @@ class BatchNormQuantizer(nn.Module):
         # debug
         name="",
         int_compute=False,
-        no_quantize_output=False
+        no_quantize_output=False,
     ):
         """
         Wrapper layer that can quantize the input (conv-bn, deconv-bn, linear-bn) layers.
@@ -285,6 +309,7 @@ class BatchNormQuantizer(nn.Module):
         self._ni = ni
         self._bits = bits
         self.no_quantize_output = no_quantize_output
+        assert quantize_weight_per_channel, "quantize_weight_per_channel is enforced!"
         self.quantize_weight_per_channel = quantize_weight_per_channel
         self.int_compute = int_compute
 
@@ -362,12 +387,16 @@ class BatchNormQuantizer(nn.Module):
         if self._n_updates >= self.merge_bn_step:
             if not self._bn_merged:
                 with torch.no_grad():
-                    print(f"[Quantizer] @ {self._n_updates} # {self.name} -> Merge BN")
-                    self.op[0].weight = self.weight
-                    self.op[0].bias = self.bias
-                    weight, bias = self.merge_bn(self.op[0], self.bn)
-                    self.weight.data = weight
-                    self.bias = nn.Parameter(bias, requires_grad=True)
+                    weight, bias = self.weight, self.bias
+                    if self.bn is not None:
+                        print(
+                            f"[Quantizer] @ {self._n_updates} # {self.name} -> Merge BN"
+                        )
+                        self.op[0].weight = self.weight
+                        self.op[0].bias = self.bias
+                        weight, bias = self.merge_bn(self.op[0], self.bn)
+                        self.weight.data = weight
+                        self.bias = nn.Parameter(bias, requires_grad=True)
                     if self.quantize_weight_per_channel:
                         print(
                             f"[Quantizer] @ {self._n_updates} # {self.name} -> Quantize weights by MSE"
@@ -378,9 +407,10 @@ class BatchNormQuantizer(nn.Module):
                                 weight[i] if self.channel_index == 0 else weight[:, i],
                                 bits,
                             )
-                            bs = calculate_best_n(bias[i], bits)
                             self.nw[i] = ws
-                            self.nb[i] = bs
+                            if bias is not None:
+                                bs = calculate_best_n(bias[i], bits)
+                                self.nb[i] = bs
                     self._bn_merged = True
 
         n_m = self.nw + self._ni
@@ -426,9 +456,11 @@ class BatchNormQuantizer(nn.Module):
 
 
 def quantize_sequential(*args, **kwargs):
-    if kwargs.get('merge_bn_step', 0) > 0:
-        print(f'use quantization! {kwargs}')
-        return BatchNormQuantizer(args[0], bn=args[1], **kwargs)
+    if kwargs.get("merge_bn_step", 0) > 0:
+        print(f"use quantization! {kwargs}")
+        return BatchNormQuantizer(
+            args[0], bn=args[1] if len(args) > 1 else None, **kwargs
+        )
     else:
         return nn.Sequential(*args)
 

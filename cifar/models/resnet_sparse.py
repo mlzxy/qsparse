@@ -73,6 +73,9 @@ class SparseResNet(nn.Module):
             block, 256, num_blocks[2], stride=2, **sparse_kwargs, name="sparse_block3", quantize_kwargs=quantize_kwargs)
         self.layer4 = self._make_layer(
             block, 512, num_blocks[3], stride=2, **sparse_kwargs, name="sparse_block4", quantize_kwargs=quantize_kwargs)
+        # self.linear = quantize_sequential(nn.Linear(512*block.expansion, num_classes),  # not work, don't quantize last layer during training
+        #                                   no_quantize_output=True,
+        #                                   **quantize_kwargs)
         self.linear = nn.Linear(512*block.expansion, num_classes)
 
     def _make_layer(self, block, planes, num_blocks, stride, **kwargs):

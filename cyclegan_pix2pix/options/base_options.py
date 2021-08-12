@@ -89,6 +89,7 @@ class BaseOptions:
         )
 
         parser.add_argument("--sparse", type=str, default="")
+        parser.add_argument("--quantize_step", type=int, default=-1)
 
         parser.add_argument(
             "--n_layers_D", type=int, default=3, help="only used if netD==n_layers"

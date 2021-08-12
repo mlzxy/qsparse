@@ -4,7 +4,7 @@ from torch.nn import init
 import functools
 from torch.optim import lr_scheduler
 from sparse import SparseLayer
-
+from quantize import QuantizeLayer, quantize_sequential, quantize
 
 ###############################################################################
 # Helper Functions
@@ -118,7 +118,7 @@ def init_net(net, init_type='normal', init_gain=0.02, gpu_ids=[]):
     return net
 
 
-def define_G(input_nc, output_nc, ngf, netG, norm='batch', use_dropout=False, init_type='normal', init_gain=0.02, gpu_ids=[], sparse_kwargs: dict = None):
+def define_G(input_nc, output_nc, ngf, netG, norm='batch', use_dropout=False, init_type='normal', init_gain=0.02, gpu_ids=[], sparse_kwargs: dict = None, quantize_step=-1):
     """Create a generator
 
     Parameters:
@@ -149,17 +149,21 @@ def define_G(input_nc, output_nc, ngf, netG, norm='batch', use_dropout=False, in
     norm_layer = get_norm_layer(norm_type=norm)
 
     if netG == 'resnet_9blocks':
+        if quantize_step > 0:
+            raise NotImplementedError
         net = ResnetGenerator(input_nc, output_nc, ngf, norm_layer=norm_layer,
                               use_dropout=use_dropout, n_blocks=9, sparse_kwargs=sparse_kwargs)
     elif netG == 'resnet_6blocks':
+        if quantize_step > 0:
+            raise NotImplementedError
         net = ResnetGenerator(input_nc, output_nc, ngf, norm_layer=norm_layer,
                               use_dropout=use_dropout, n_blocks=6, sparse_kwargs=sparse_kwargs)
     elif netG == 'unet_128':
         net = UnetGenerator(input_nc, output_nc, 7, ngf, norm_layer=norm_layer,
-                            use_dropout=use_dropout, sparse_kwargs=sparse_kwargs)
+                            use_dropout=use_dropout, sparse_kwargs=sparse_kwargs, quantize_step=quantize_step)
     elif netG == 'unet_256':
         net = UnetGenerator(input_nc, output_nc, 8, ngf, norm_layer=norm_layer,
-                            use_dropout=use_dropout, sparse_kwargs=sparse_kwargs)
+                            use_dropout=use_dropout, sparse_kwargs=sparse_kwargs, quantize_step=quantize_step)
     else:
         raise NotImplementedError('Generator model name [%s] is not recognized' % netG)
     return init_net(net, init_type, init_gain, gpu_ids)
@@ -455,7 +459,7 @@ class ResnetBlock(nn.Module):
 class UnetGenerator(nn.Module):
     """Create a Unet-based generator"""
 
-    def __init__(self, input_nc, output_nc, num_downs, ngf=64, norm_layer=nn.BatchNorm2d, use_dropout=False, sparse_kwargs=None):
+    def __init__(self, input_nc, output_nc, num_downs, ngf=64, norm_layer=nn.BatchNorm2d, use_dropout=False, sparse_kwargs=None, quantize_step=-1):
         """Construct a Unet generator
         Parameters:
             input_nc (int)  -- the number of channels in input images
@@ -471,23 +475,113 @@ class UnetGenerator(nn.Module):
         super(UnetGenerator, self).__init__()
         # construct unet structure
         unet_block = UnetSkipConnectionBlock(ngf * 8, ngf * 8, input_nc=None, submodule=None,
-                                             norm_layer=norm_layer, innermost=True, sparse_kwargs=sparse_kwargs)  # add the innermost layer
+                                             norm_layer=norm_layer, innermost=True, sparse_kwargs=sparse_kwargs, quantize_step=quantize_step)  # add the innermost layer
         for i in range(num_downs - 5):          # add intermediate layers with ngf * 8 filters
             unet_block = UnetSkipConnectionBlock(ngf * 8, ngf * 8, input_nc=None, submodule=unet_block,
-                                                 norm_layer=norm_layer, use_dropout=use_dropout, sparse_kwargs=sparse_kwargs)
+                                                 norm_layer=norm_layer, use_dropout=use_dropout, sparse_kwargs=sparse_kwargs, quantize_step=quantize_step)
         # gradually reduce the number of filters from ngf * 8 to ngf
         unet_block = UnetSkipConnectionBlock(ngf * 4, ngf * 8, input_nc=None,
-                                             submodule=unet_block, norm_layer=norm_layer, sparse_kwargs=sparse_kwargs)
+                                             submodule=unet_block, norm_layer=norm_layer, sparse_kwargs=sparse_kwargs, quantize_step=quantize_step)
         unet_block = UnetSkipConnectionBlock(ngf * 2, ngf * 4, input_nc=None,
-                                             submodule=unet_block, norm_layer=norm_layer, sparse_kwargs=sparse_kwargs)
+                                             submodule=unet_block, norm_layer=norm_layer, sparse_kwargs=sparse_kwargs, quantize_step=quantize_step)
         unet_block = UnetSkipConnectionBlock(ngf, ngf * 2, input_nc=None,
-                                             submodule=unet_block, norm_layer=norm_layer, sparse_kwargs=sparse_kwargs)
+                                             submodule=unet_block, norm_layer=norm_layer, sparse_kwargs=sparse_kwargs, quantize_step=quantize_step)
         self.model = UnetSkipConnectionBlock(output_nc, ngf, input_nc=input_nc, submodule=unet_block,
-                                             outermost=True, norm_layer=norm_layer, sparse_kwargs=sparse_kwargs)  # add the outermost layer
+                                             outermost=True, norm_layer=norm_layer, sparse_kwargs=sparse_kwargs, quantize_step=quantize_step)  # add the outermost layer
 
     def forward(self, input):
         """Standard forward"""
         return self.model(input)
+
+
+# class UnetSkipConnectionBlock(nn.Module):
+#     """Defines the Unet submodule with skip connection.
+#         X -------------------identity----------------------
+#         |-- downsampling -- |submodule| -- upsampling --|
+#     """
+
+#     def __init__(self, outer_nc, inner_nc, input_nc=None,
+#                  submodule=None, outermost=False, innermost=False, norm_layer=nn.BatchNorm2d, use_dropout=False, sparse_kwargs=None, quantize_step=-1):
+#         """Construct a Unet submodule with skip connections.
+#         Parameters:
+#             outer_nc (int) -- the number of filters in the outer conv layer
+#             inner_nc (int) -- the number of filters in the inner conv layer
+#             input_nc (int) -- the number of channels in input images/features
+#             submodule (UnetSkipConnectionBlock) -- previously defined submodules
+#             outermost (bool)    -- if this module is the outermost module
+#             innermost (bool)    -- if this module is the innermost module
+#             norm_layer          -- normalization layer
+#             use_dropout (bool)  -- if use dropout layers.
+#         """
+#         super(UnetSkipConnectionBlock, self).__init__()
+#         self.outermost = outermost
+#         if type(norm_layer) == functools.partial:
+#             use_bias = norm_layer.func == nn.InstanceNorm2d
+#         else:
+#             use_bias = norm_layer == nn.InstanceNorm2d
+#         if input_nc is None:
+#             input_nc = outer_nc
+
+#         if quantize_step > 0:
+#             self.use_quantize = True
+#             quantize_params = {'merge_bn_step': quantize_step, 'no_quantize_output': True, 'ni': 6, 'no': 6}
+#         else:
+#             self.use_quantize = False
+#             quantize_params = {}
+
+#         def QLayer():
+#             if self.use_quantize:
+#                 return QuantizeLayer(8, 6)
+#             else:
+#                 return nn.Identity()
+
+#         downconv = nn.Conv2d(input_nc, inner_nc, kernel_size=4,
+#                                                  stride=2, padding=1, bias=use_bias)
+#         downrelu = nn.LeakyReLU(0.2, True)
+#         downnorm = norm_layer(inner_nc)
+#         uprelu = nn.ReLU(True)
+#         upnorm = norm_layer(outer_nc)
+
+#         def get_sparse_layer():
+#             print('Sparse = ', sparse_kwargs is not None, sparse_kwargs)
+#             return SparseLayer(**sparse_kwargs) if sparse_kwargs is not None else nn.Identity()
+
+#         if outermost:
+#             # upconv = quantize_sequential(nn.ConvTranspose2d(inner_nc * 2, outer_nc,
+#             #                                                 kernel_size=4, stride=2,
+#             #                                                 padding=1), **quantize_params)
+#             upconv = nn.ConvTranspose2d(inner_nc * 2, outer_nc,
+#                                         kernel_size=4, stride=2,
+#                                         padding=1)
+#             down = [downconv, downnorm]
+#             up = [uprelu, upconv, upnorm, nn.Tanh()]
+#             model = down + [submodule] + up
+#         elif innermost:
+#             upconv = nn.ConvTranspose2d(inner_nc, outer_nc,
+#                                         kernel_size=4, stride=2,
+#                                         padding=1, bias=use_bias)
+#             down = [downrelu, downconv]
+#             up = [uprelu, upconv, upnorm, get_sparse_layer()]
+#             model = down + up
+#         else:
+#             upconv = nn.ConvTranspose2d(inner_nc * 2, outer_nc,
+#                                         kernel_size=4, stride=2,
+#                                         padding=1, bias=use_bias)
+#             down = [downrelu, downconv, downnorm, get_sparse_layer()]
+#             up = [uprelu, upconv, upnorm,  get_sparse_layer()]
+
+#             if use_dropout:
+#                 model = down + [submodule] + up + [nn.Dropout(0.5)]
+#             else:
+#                 model = down + [submodule] + up
+
+#         self.model = nn.Sequential(*model)
+
+#     def forward(self, x):
+#         if self.outermost:
+#             return self.model(x)
+#         else:   # add skip connections
+#             return torch.cat([x, self.model(x)], 1)
 
 
 class UnetSkipConnectionBlock(nn.Module):
@@ -497,7 +591,7 @@ class UnetSkipConnectionBlock(nn.Module):
     """
 
     def __init__(self, outer_nc, inner_nc, input_nc=None,
-                 submodule=None, outermost=False, innermost=False, norm_layer=nn.BatchNorm2d, use_dropout=False, sparse_kwargs=None):
+                 submodule=None, outermost=False, innermost=False, norm_layer=nn.BatchNorm2d, use_dropout=False, sparse_kwargs=None, quantize_step=-1):
         """Construct a Unet submodule with skip connections.
 
         Parameters:
@@ -511,6 +605,19 @@ class UnetSkipConnectionBlock(nn.Module):
             use_dropout (bool)  -- if use dropout layers.
         """
         super(UnetSkipConnectionBlock, self).__init__()
+        if quantize_step > 0:
+            self.use_quantize = True
+            quantize_params = {'merge_bn_step': quantize_step, 'no_quantize_output': True, 'ni': 6, 'no': 6}
+        else:
+            self.use_quantize = False
+            quantize_params = {}
+
+        def QLayer():
+            if self.use_quantize:
+                return QuantizeLayer(8, 6)
+            else:
+                return nn.Identity()
+
         self.outermost = outermost
         if type(norm_layer) == functools.partial:
             use_bias = norm_layer.func == nn.InstanceNorm2d
@@ -518,8 +625,8 @@ class UnetSkipConnectionBlock(nn.Module):
             use_bias = norm_layer == nn.InstanceNorm2d
         if input_nc is None:
             input_nc = outer_nc
-        downconv = nn.Conv2d(input_nc, inner_nc, kernel_size=4,
-                             stride=2, padding=1, bias=use_bias)
+        downconv = quantize_sequential(nn.Conv2d(input_nc, inner_nc, kernel_size=4,
+                                                 stride=2, padding=1, bias=use_bias), **quantize_params)
         downrelu = nn.LeakyReLU(0.2, True)
         downnorm = norm_layer(inner_nc)
         uprelu = nn.ReLU(True)
@@ -531,24 +638,24 @@ class UnetSkipConnectionBlock(nn.Module):
 
         if outermost:
             upconv = nn.ConvTranspose2d(inner_nc * 2, outer_nc,
-                                        kernel_size=4, stride=2,
-                                        padding=1)
-            down = [downconv]
-            up = [uprelu, upconv, nn.Tanh()]
+                                                            kernel_size=4, stride=2,
+                                                            padding=1)
+            down = [downconv, downnorm, QLayer()]  # for every conv/deconv, there is a quantize layer afterwards
+            up = [uprelu, upconv, upnorm, nn.Tanh()]
             model = down + [submodule] + up
         elif innermost:
-            upconv = nn.ConvTranspose2d(inner_nc, outer_nc,
-                                        kernel_size=4, stride=2,
-                                        padding=1, bias=use_bias)
+            upconv = quantize_sequential(nn.ConvTranspose2d(inner_nc, outer_nc,
+                                                            kernel_size=4, stride=2,
+                                                            padding=1, bias=use_bias), **quantize_params)
             down = [downrelu, downconv]
-            up = [uprelu, upconv, upnorm, get_sparse_layer()]
+            up = [uprelu, upconv, upnorm, QLayer(), get_sparse_layer()]
             model = down + up
         else:
-            upconv = nn.ConvTranspose2d(inner_nc * 2, outer_nc,
-                                        kernel_size=4, stride=2,
-                                        padding=1, bias=use_bias)
-            down = [downrelu, downconv, downnorm, get_sparse_layer()]
-            up = [uprelu, upconv, upnorm,  get_sparse_layer()]
+            upconv = quantize_sequential(nn.ConvTranspose2d(inner_nc * 2, outer_nc,
+                                                            kernel_size=4, stride=2,
+                                                            padding=1, bias=use_bias), **quantize_params)
+            down = [downrelu, downconv, downnorm, QLayer(), get_sparse_layer()]
+            up = [uprelu, upconv, upnorm, QLayer(), get_sparse_layer()]
 
             if use_dropout:
                 model = down + [submodule] + up + [nn.Dropout(0.5)]
@@ -559,6 +666,8 @@ class UnetSkipConnectionBlock(nn.Module):
 
     def forward(self, x):
         if self.outermost:
+            if self.use_quantize:
+                x = quantize(x, 8, 6)
             return self.model(x)
         else:   # add skip connections
             return torch.cat([x, self.model(x)], 1)

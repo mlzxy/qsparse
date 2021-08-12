@@ -68,6 +68,7 @@ class Pix2PixModel(BaseModel):
             opt.init_gain,
             self.gpu_ids,
             opt.sparse or None,
+            opt.quantize_step
         )
 
         if (
