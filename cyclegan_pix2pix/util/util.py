@@ -4,6 +4,7 @@ import torch
 import numpy as np
 from PIL import Image
 import os
+from torchvision.transforms import InterpolationMode
 
 
 def tensor2im(input_image, imtype=np.uint8):
@@ -58,9 +59,9 @@ def save_image(image_numpy, image_path, aspect_ratio=1.0):
     h, w, _ = image_numpy.shape
 
     if aspect_ratio > 1.0:
-        image_pil = image_pil.resize((h, int(w * aspect_ratio)), Image.BICUBIC)
+        image_pil = image_pil.resize((h, int(w * aspect_ratio)), InterpolationMode.BICUBIC)
     if aspect_ratio < 1.0:
-        image_pil = image_pil.resize((int(h / aspect_ratio), w), Image.BICUBIC)
+        image_pil = image_pil.resize((int(h / aspect_ratio), w), InterpolationMode.BICUBIC)
     image_pil.save(image_path)
 
 
