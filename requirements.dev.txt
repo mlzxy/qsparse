@@ -1,0 +1,15 @@
+autoflake
+black==20.8b1
+isort>=5.6.4
+mkdocs>=1.1.2
+mkdocs-exclude>=1.0.2
+mkdocs-material>=5.5.1
+mkdocs-rtd-dropdown>=1.0.2
+mkdocstrings>=0.12.2
+pre-commit
+pudb
+Pygments>=2.6.1
+pymdown-extensions<8.0
+pytest
+pytest-cov
+typing_extensions

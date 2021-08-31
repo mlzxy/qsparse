@@ -1,0 +1,52 @@
+site_name: Quantized Sparse - Joint Quantization & Pruning in PyTorch
+site_url: "https://qsparse.readthedocs.io/en/latest/"
+repo_url: "https://github.com/mlzxy/qsparse"
+repo_name: Github
+nav:
+    - Home: "README.md"
+    - Examples: "examples.md"
+    - Tutorial: "tutorial.md"
+    - Reference:
+      - sparse: "reference/sparse.md"
+      - quantize: "reference/quantize.md"
+      - util: "reference/util.md"
+theme:
+  name: "readthedocs"
+
+plugins:
+  - search
+  - mkdocstrings:
+      default_handler: python
+      handlers:
+        python:
+          rendering:
+            show_source: true
+      watch:
+        - qsparse
+
+extra:
+  search:
+    language: "en"
+
+markdown_extensions:
+  - admonition # notes make pretty
+  - footnotes
+  - meta # page-specific context
+  - toc:
+      permalink: true # inserts an anchor
+  - sane_lists # better ul and ol
+  - pymdownx.betterem: # better italic and bold
+      smart_enable: asterisk
+  - pymdownx.caret # insert text and superscript
+  - pymdownx.details # details and summary; work with admonition
+  - pymdownx.highlight: # better code, instead of CodeHilite           <--------
+      linenums: true
+  - pymdownx.inlinehilite # like codehilite but inline
+  - pymdownx.magiclink # auto links
+  - pymdownx.mark # highlight text
+  - pymdownx.smartsymbols # special symbols
+  - pymdownx.superfences: # nest code blocks under other blocks   <-------
+  - pymdownx.tasklist: # better tasks lists
+      custom_checkbox: true
+  - pymdownx.tabbed # auto tabs
+  - pymdownx.tilde # strike through cross out text
