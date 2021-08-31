@@ -12,4 +12,3 @@ Pygments>=2.6.1
 pymdown-extensions<8.0
 pytest
 pytest-cov
-typing_extensions

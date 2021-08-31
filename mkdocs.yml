@@ -9,7 +9,6 @@ nav:
     - Reference:
       - sparse: "reference/sparse.md"
       - quantize: "reference/quantize.md"
-      - util: "reference/util.md"
 theme:
   name: "readthedocs"
 
