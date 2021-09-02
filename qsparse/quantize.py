@@ -1,20 +1,20 @@
 from collections import deque
-from typing import Optional, Tuple, Union
+from typing import Optional, Tuple
 
 import torch
 import torch.nn as nn
-from typing_extensions import Protocol
+
+from qsparse.common import (
+    OptionalTensorOrModule,
+    QuantizeCallback,
+    TensorOrInt,
+    ensure_tensor,
+)
+from qsparse.imitation import imitate
 
 __all__ = [
     "quantize",
 ]
-
-
-def ensure_tensor(v):
-    if isinstance(v, torch.Tensor):
-        return v
-    else:
-        return torch.tensor(v)
 
 
 class LinearQuantization(torch.autograd.Function):
@@ -23,7 +23,7 @@ class LinearQuantization(torch.autograd.Function):
         ctx,
         input: torch.Tensor,
         bits: int = 8,
-        decimal: Union[int, torch.Tensor] = 5,
+        decimal: TensorOrInt = 5,
         channel_index: int = 1,
     ):
         limit = 2.0 ** (bits - 1)
@@ -51,21 +51,10 @@ class LinearQuantization(torch.autograd.Function):
         return (v, None, None, None, None)
 
 
-class QuantizationCallback(Protocol):
-    def __call__(
-        self,
-        inp: torch.Tensor,
-        bits: int = 8,
-        decimal: Union[int, torch.Tensor] = 5,
-        channel_index: int = 1,
-    ) -> torch.Tensor:
-        pass
-
-
 def linear_quantize_callback(
     inp: torch.Tensor,
     bits: int = 8,
-    decimal: Union[int, torch.Tensor] = 5,
+    decimal: TensorOrInt = 5,
     channel_index: int = 1,
 ) -> torch.Tensor:
     return LinearQuantization.apply(inp, bits, decimal, channel_index)
@@ -91,20 +80,21 @@ def arg_decimal_min_mse(
 
 
 def quantize(
-    arg: Optional[Union[torch.Tensor, nn.Module]] = None,
+    arg: OptionalTensorOrModule = None,
     bits: int = 8,
     channelwise: int = 1,
     decimal_range: Tuple[int, int] = (1, 20),
     # for tensor computation
-    decimal: Optional[Union[int, torch.Tensor]] = None,
+    decimal: Optional[TensorOrInt] = None,
     # for step-wise training
     timeout: int = 1000,
+    interval: int = -1,
     buffer_size: int = 1,
     # for customization
-    callback: QuantizationCallback = linear_quantize_callback,
+    callback: QuantizeCallback = linear_quantize_callback,
     # for debug purpose
     name: str = "",
-) -> Optional[Union[torch.Tensor, nn.Module]]:
+) -> OptionalTensorOrModule:
     class QuantizeLayer(nn.Module):
         def __init__(self):
             super().__init__()
@@ -112,10 +102,11 @@ def quantize(
                 f"[Quantize @ {name}] bits={bits} channelwise={channelwise} buffer_size={buffer_size} timeout={timeout}"
             )
             self.buffer = deque(maxlen=buffer_size)
-            self._inited = False
+            self._init = False
+            self._quantized = False
 
         def forward(self, x):
-            if not self._inited:
+            if not self._init:
                 self.decimal = nn.Parameter(
                     torch.ones(1 if channelwise < 0 else x.shape[channelwise]).to(
                         x.device
@@ -123,38 +114,52 @@ def quantize(
                     requires_grad=False,
                 )
                 self._n_updates = nn.Parameter(
-                    torch.zeros(1, dtype="int"),
+                    torch.zeros(1, dtype=torch.int),
                     requires_grad=False,
                 )
-                self._inited = True
+                self.bits = nn.Parameter(
+                    torch.tensor(bits, dtype=torch.int), requires_grad=False
+                )
+                self._init = True
 
-            if self._n_updates <= timeout:
+            if (
+                (timeout - buffer_size) < self._n_updates <= timeout
+            ):  # only collecting buffer when needed to speedup
                 self.buffer.append(x.detach().to("cpu"))
 
-            if self._n_updates == timeout:
-                print(f"Quantizing {name}")
-                if channelwise >= 0:
-                    for i in range(x.shape[channelwise]):
+            if self.training or (not self._quantized):
+                if self._n_updates == timeout or (
+                    self._n_updates > timeout
+                    and ((self._n_updates - timeout) % interval) == 0
+                    and interval > 0
+                ):
+                    print(f"Quantizing {name}")
+                    if channelwise >= 0:
+                        for i in range(x.shape[channelwise]):
+                            n = arg_decimal_min_mse(
+                                x[
+                                    tuple(
+                                        [
+                                            slice(0, cs) if ci != channelwise else i
+                                            for ci, cs in enumerate(x.shape)
+                                        ]
+                                    )
+                                ],
+                                bits,
+                                decimal_range,
+                            )
+                            print(f"{name} decimal for channel {i} = {n}")
+                            self.decimal.data[i] = n
+                    else:
                         n = arg_decimal_min_mse(
-                            x[
-                                tuple(
-                                    [
-                                        slice(0, cs) if ci != channelwise else i
-                                        for ci, cs in enumerate(x.shape)
-                                    ]
-                                )
-                            ],
+                            torch.cat([a for a in self.buffer], dim=0),
                             bits,
                             decimal_range,
                         )
-                        print(f"{name} decimal for channel {i} = {n}")
-                        self.decimal.data[i] = n
-                else:
-                    n = arg_decimal_min_mse(
-                        torch.cat([a for a in self.buffer], dim=0), bits, decimal_range
-                    )
-                    print(f"{name} decimal = {n}")
-                    self.decimal.data[:] = n
+                        print(f"{name} decimal = {n}")
+                        self.decimal.data[:] = n
+
+                    self._quantized = True
 
             if self._n_updates < timeout:
                 out = x
@@ -173,27 +178,16 @@ def quantize(
         ), "decimal points for the input tensor must be provided"
         return linear_quantize_callback(arg, bits, decimal, channelwise)
     elif isinstance(arg, nn.Module):
-        InputClass = arg.__class__
-
-        def get_prev_weight(self: nn.Module):
-            if "Imitation" in str(InputClass):
-                return InputClass.weight.__get__(
-                    self
-                )  # prune is already called, so the weight is a property
-            else:
-                return self._parameters["weight"]
-
-        arg.quantize = QuantizeLayer()
-
-        class ImitationQuantize(nn.Module):
-            @property
-            def weight(self):
-                return self.quantize(get_prev_weight(self))
-
-        arg.__class__ = ImitationQuantize
-        return arg
+        return imitate(arg, "quantize", QuantizeLayer())
+    else:
+        raise ValueError(f"{arg} is not a valid argument for quantize")
 
 
 if __name__ == "__main__":
-    print(quantize())
+    layer = quantize(timeout=0)
+    print(layer)
     print(quantize(torch.nn.Conv2d(10, 30, 3)))
+
+    data = torch.rand(10, 10)
+    print(data)
+    print(layer(data))

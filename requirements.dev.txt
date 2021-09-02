@@ -12,3 +12,6 @@ Pygments>=2.6.1
 pymdown-extensions<8.0
 pytest
 pytest-cov
+torch
+torchvision
+typing_extensions

@@ -144,3 +144,5 @@ exps
 *.c
 *.cprofile
 s3:
+examples/data
+*.pt
