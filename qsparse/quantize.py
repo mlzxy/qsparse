@@ -79,6 +79,101 @@ def arg_decimal_min_mse(
     return best_n
 
 
+class QuantizeLayer(nn.Module):
+    def __init__(
+        self,
+        bits: int = 8,
+        channelwise: int = 1,
+        decimal_range: Tuple[int, int] = (1, 20),
+        # for step-wise training
+        timeout: int = 1000,
+        interval: int = -1,
+        buffer_size: int = 1,
+        # for customization
+        callback: QuantizeCallback = linear_quantize_callback,
+        # for debug purpose
+        name: str = "",
+    ):
+        super().__init__()
+        print(
+            f"[Quantize @ {name}] bits={bits} channelwise={channelwise} buffer_size={buffer_size} timeout={timeout}"
+        )
+        self.buffer = deque(maxlen=buffer_size)
+        self.buffer_size = buffer_size
+        self.name = name
+        self.bits = bits
+        self.channelwise = channelwise
+        self.timeout = timeout
+        self.callback = callback
+        self.interval = interval
+        self.decimal_range = decimal_range
+        self._init = False
+        self._quantized = False
+
+    def forward(self, x):
+        if not self._init:
+            self.decimal = nn.Parameter(
+                torch.ones(1 if self.channelwise < 0 else x.shape[self.channelwise]),
+                requires_grad=False,
+            ).to(x.device)
+            self._n_updates = nn.Parameter(
+                torch.zeros(1, dtype=torch.int),
+                requires_grad=False,
+            ).to(x.device)
+            self.bits = nn.Parameter(
+                torch.tensor(self.bits, dtype=torch.int), requires_grad=False
+            ).to(x.device)
+            self._init = True
+
+        if (
+            (self.timeout - self.buffer_size) < self._n_updates <= self.timeout
+        ):  # only collecting buffer when needed to speedup
+            self.buffer.append(x.detach().to("cpu"))
+
+        if self.training or (not self._quantized):
+            if self._n_updates == self.timeout or (
+                self._n_updates > self.timeout
+                and ((self._n_updates - self.timeout) % self.interval) == 0
+                and self.interval > 0
+            ):
+                print(f"Quantizing {self.name}")
+                if self.channelwise >= 0:
+                    for i in range(x.shape[self.channelwise]):
+                        n = arg_decimal_min_mse(
+                            x[
+                                tuple(
+                                    [
+                                        slice(0, cs) if ci != self.channelwise else i
+                                        for ci, cs in enumerate(x.shape)
+                                    ]
+                                )
+                            ],
+                            self.bits,
+                            self.decimal_range,
+                        )
+                        print(f"{self.name} decimal for channel {i} = {n}")
+                        self.decimal.data[i] = n
+                else:
+                    n = arg_decimal_min_mse(
+                        torch.cat([a for a in self.buffer], dim=0),
+                        self.bits,
+                        self.decimal_range,
+                    )
+                    print(f"{self.name} decimal = {n}")
+                    self.decimal.data[:] = n
+
+                self._quantized = True
+
+        if self._n_updates < self.timeout:
+            out = x
+        else:
+            out = self.callback(x, self.bits, self.decimal, self.channelwise)
+
+        if self.training:
+            self._n_updates += 1
+        return out
+
+
 def quantize(
     arg: OptionalTensorOrModule = None,
     bits: int = 8,
@@ -95,90 +190,27 @@ def quantize(
     # for debug purpose
     name: str = "",
 ) -> OptionalTensorOrModule:
-    class QuantizeLayer(nn.Module):
-        def __init__(self):
-            super().__init__()
-            print(
-                f"[Quantize @ {name}] bits={bits} channelwise={channelwise} buffer_size={buffer_size} timeout={timeout}"
-            )
-            self.buffer = deque(maxlen=buffer_size)
-            self._init = False
-            self._quantized = False
-
-        def forward(self, x):
-            if not self._init:
-                self.decimal = nn.Parameter(
-                    torch.ones(1 if channelwise < 0 else x.shape[channelwise]).to(
-                        x.device
-                    ),
-                    requires_grad=False,
-                )
-                self._n_updates = nn.Parameter(
-                    torch.zeros(1, dtype=torch.int),
-                    requires_grad=False,
-                )
-                self.bits = nn.Parameter(
-                    torch.tensor(bits, dtype=torch.int), requires_grad=False
-                )
-                self._init = True
-
-            if (
-                (timeout - buffer_size) < self._n_updates <= timeout
-            ):  # only collecting buffer when needed to speedup
-                self.buffer.append(x.detach().to("cpu"))
-
-            if self.training or (not self._quantized):
-                if self._n_updates == timeout or (
-                    self._n_updates > timeout
-                    and ((self._n_updates - timeout) % interval) == 0
-                    and interval > 0
-                ):
-                    print(f"Quantizing {name}")
-                    if channelwise >= 0:
-                        for i in range(x.shape[channelwise]):
-                            n = arg_decimal_min_mse(
-                                x[
-                                    tuple(
-                                        [
-                                            slice(0, cs) if ci != channelwise else i
-                                            for ci, cs in enumerate(x.shape)
-                                        ]
-                                    )
-                                ],
-                                bits,
-                                decimal_range,
-                            )
-                            print(f"{name} decimal for channel {i} = {n}")
-                            self.decimal.data[i] = n
-                    else:
-                        n = arg_decimal_min_mse(
-                            torch.cat([a for a in self.buffer], dim=0),
-                            bits,
-                            decimal_range,
-                        )
-                        print(f"{name} decimal = {n}")
-                        self.decimal.data[:] = n
-
-                    self._quantized = True
-
-            if self._n_updates < timeout:
-                out = x
-            else:
-                out = callback(x, bits, self.decimal, channelwise)
-
-            if self.training:
-                self._n_updates += 1
-            return out
+    def get_quantize_layer():
+        return QuantizeLayer(
+            bits=bits,
+            channelwise=channelwise,
+            decimal_range=decimal_range,
+            timeout=int(timeout),
+            interval=int(interval),
+            buffer_size=buffer_size,
+            callback=callback,
+            name=name,
+        )
 
     if arg is None:
-        return QuantizeLayer()
+        return get_quantize_layer()
     elif isinstance(arg, torch.Tensor):
         assert (
             decimal is not None
         ), "decimal points for the input tensor must be provided"
         return linear_quantize_callback(arg, bits, decimal, channelwise)
     elif isinstance(arg, nn.Module):
-        return imitate(arg, "quantize", QuantizeLayer())
+        return imitate(arg, "quantize", get_quantize_layer())
     else:
         raise ValueError(f"{arg} is not a valid argument for quantize")
 

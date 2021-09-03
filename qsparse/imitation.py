@@ -15,6 +15,8 @@ def imitate(human: nn.Module, name: str, thing: Type):
 
     setattr(human, name, thing)
 
+    # python pickle doesn't support closure, so to use torch.save/load,  we need to use like `torch.save(data, path, pickle_module=cloudpickle)`
+
     class Imitation(InputClass):
         @property
         def weight(self):
