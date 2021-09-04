@@ -165,7 +165,7 @@ class QuantizeLayer(nn.Module):
                         self.decimal.data[i] = n
                 else:
                     n = arg_decimal_min_mse(
-                        torch.cat([a for a in self.buffer], dim=0),
+                        torch.cat([a.view(-1) for a in self.buffer], dim=0),
                         self.bits,
                         self.decimal_range,
                     )
