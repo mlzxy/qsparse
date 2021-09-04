@@ -1,5 +1,5 @@
 from collections import deque
-from typing import Iterable, Union
+from typing import Iterable, Union, List
 
 import torch
 import torch.nn as nn
@@ -10,7 +10,10 @@ from qsparse.imitation import imitate
 __all__ = ["prune", "unstructured_prune_callback", "structured_prune_callback"]
 
 
-def unstructured_prune_callback(inp: torch.Tensor, sparsity: float) -> torch.Tensor:
+def unstructured_prune_callback(
+    inp: List[torch.Tensor], sparsity: float
+) -> torch.Tensor:
+    inp = torch.cat([v.view(1, *v.shape) for v in inp], dim=0)
     saliency = inp.abs().mean(dim=0)
     values = saliency.flatten().sort()[0]
     n = len(values)
@@ -21,13 +24,16 @@ def unstructured_prune_callback(inp: torch.Tensor, sparsity: float) -> torch.Ten
 
 
 def structured_prune_callback(
-    inp: torch.Tensor, sparsity: float, prunable: Union[Iterable[int], int] = {1}
+    inp: List[torch.Tensor], sparsity: float, prunable: Union[Iterable[int], int] = {1}
 ) -> torch.Tensor:
-    saliency = inp.abs().mean(dim=0, keepdim=True)
     prunables = {prunable} if isinstance(prunable, int) else prunable
-    for _i in range(1, len(saliency.shape)):
-        if _i not in prunables:
-            saliency = saliency.mean(dim=_i, keepdim=True)
+    saliency_lst = []
+    for saliency in inp:
+        for _i in range(len(saliency.shape)):
+            if _i not in prunables:
+                saliency = saliency.abs().mean(dim=_i, keepdim=True)
+        saliency_lst.append(saliency)
+    saliency = torch.cat(saliency_lst, dim=0).abs().mean(dim=0, keepdim=True)
     values = saliency.flatten().sort()[0]
     n = len(values)
     idx = max(int(sparsity * n - 1), 0)
@@ -65,28 +71,35 @@ class PruneLayer(nn.Module):
         self.buffer_size = buffer_size
         self._init = False
 
+        for k in [
+            "mask",
+            "_n_updates",
+            "_cur_sparsity",
+        ]:
+            self.register_parameter(k, None)
+
     def forward(self, x: torch.Tensor):
         if not self._init:
             assert len(x.shape) > 1
             with torch.no_grad():
-                m_example = self.callback(x, 0)
+                m_example = self.callback([x], 0)
             self.mask = nn.Parameter(
-                torch.ones(*m_example.shape, dtype=torch.bool),
+                torch.ones(*m_example.shape, dtype=torch.bool).to(x.device),
                 requires_grad=False,
-            ).to(x.device)
+            )
             self._n_updates = nn.Parameter(
-                torch.zeros(1, dtype=torch.int),
+                torch.zeros(1, dtype=torch.int).to(x.device),
                 requires_grad=False,
-            ).to(x.device)
-            self._cur_sparsity = nn.Parameter(torch.zeros(1), requires_grad=False).to(
-                x.device
+            )
+            self._cur_sparsity = nn.Parameter(
+                torch.zeros(1).to(x.device), requires_grad=False
             )
             self._init = True
 
         if any(
             [(0 <= (s - self._n_updates) <= self.buffer_size) for s in self.schedules]
         ):
-            self.buffer.append(x.detach().abs().mean(dim=0).to("cpu"))
+            self.buffer.append(x.detach().abs().mean(dim=0, keepdim=True).to("cpu"))
 
         if (
             (self._n_updates > self.start)
@@ -96,13 +109,14 @@ class PruneLayer(nn.Module):
             if ((self._n_updates - self.start) % self.interval) == 0:
                 ratio = (
                     1.0
-                    - (self._n_updates - self.start) / (self.interval * self.repetition)
+                    - (self._n_updates.item() - self.start)
+                    / (self.interval * self.repetition)
                 ) ** 3
                 self._cur_sparsity[0] = self.sparsity * (1 - ratio)
 
                 if self._cur_sparsity > 0:
                     self.mask.data = self.callback(
-                        torch.cat([v.view(1, *v.shape) for v in self.buffer], dim=0),
+                        self.buffer,
                         self._cur_sparsity.item(),
                     ).to(x.device)
 

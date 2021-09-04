@@ -1,4 +1,4 @@
-from typing import Optional, Union
+from typing import Optional, Union, List
 
 import torch
 import torch.nn as nn
@@ -28,5 +28,5 @@ class QuantizeCallback(Protocol):
 
 
 class PruneCallback(Protocol):
-    def __call__(self, inp: torch.Tensor, sparsity: float) -> torch.Tensor:
+    def __call__(self, inp: List[torch.Tensor], sparsity: float) -> torch.Tensor:
         pass

@@ -101,28 +101,38 @@ class QuantizeLayer(nn.Module):
         self.buffer = deque(maxlen=buffer_size)
         self.buffer_size = buffer_size
         self.name = name
-        self.bits = bits
         self.channelwise = channelwise
         self.timeout = timeout
+        self._bits = bits
         self.callback = callback
         self.interval = interval
         self.decimal_range = decimal_range
         self._init = False
         self._quantized = False
 
+        for k in [
+            "decimal",
+            "_n_updates",
+            "bits",
+        ]:
+            self.register_parameter(k, None)
+
     def forward(self, x):
         if not self._init:
             self.decimal = nn.Parameter(
-                torch.ones(1 if self.channelwise < 0 else x.shape[self.channelwise]),
+                torch.ones(1 if self.channelwise < 0 else x.shape[self.channelwise]).to(
+                    x.device
+                ),
                 requires_grad=False,
-            ).to(x.device)
+            )
             self._n_updates = nn.Parameter(
-                torch.zeros(1, dtype=torch.int),
+                torch.zeros(1, dtype=torch.int).to(x.device),
                 requires_grad=False,
-            ).to(x.device)
+            )
             self.bits = nn.Parameter(
-                torch.tensor(self.bits, dtype=torch.int), requires_grad=False
-            ).to(x.device)
+                torch.tensor(self._bits, dtype=torch.int).to(x.device),
+                requires_grad=False,
+            )
             self._init = True
 
         if (
@@ -136,7 +146,7 @@ class QuantizeLayer(nn.Module):
                 and ((self._n_updates - self.timeout) % self.interval) == 0
                 and self.interval > 0
             ):
-                print(f"Quantizing {self.name}")
+                print(f"Quantizing {self.name} (channelwise)")
                 if self.channelwise >= 0:
                     for i in range(x.shape[self.channelwise]):
                         n = arg_decimal_min_mse(
@@ -151,7 +161,7 @@ class QuantizeLayer(nn.Module):
                             self.bits,
                             self.decimal_range,
                         )
-                        print(f"{self.name} decimal for channel {i} = {n}")
+                        # print(f"{self.name} decimal for channel {i} = {n}")
                         self.decimal.data[i] = n
                 else:
                     n = arg_decimal_min_mse(
