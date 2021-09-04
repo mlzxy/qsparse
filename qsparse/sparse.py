@@ -1,4 +1,5 @@
 from collections import deque
+from typing import Iterable, Union
 
 import torch
 import torch.nn as nn
@@ -6,13 +7,27 @@ import torch.nn as nn
 from qsparse.common import OptionalTensorOrModule, PruneCallback
 from qsparse.imitation import imitate
 
-__all__ = [
-    "prune",
-]
+__all__ = ["prune", "unstructured_prune_callback", "structured_prune_callback"]
 
 
 def unstructured_prune_callback(inp: torch.Tensor, sparsity: float) -> torch.Tensor:
     saliency = inp.abs().mean(dim=0)
+    values = saliency.flatten().sort()[0]
+    n = len(values)
+    idx = max(int(sparsity * n - 1), 0)
+    threshold = values[idx]
+    mask = saliency >= threshold
+    return mask
+
+
+def structured_prune_callback(
+    inp: torch.Tensor, sparsity: float, prunable: Union[Iterable[int], int] = {1}
+) -> torch.Tensor:
+    saliency = inp.abs().mean(dim=0, keepdim=True)
+    prunables = {prunable} if isinstance(prunable, int) else prunable
+    for _i in range(1, len(saliency.shape)):
+        if _i not in prunables:
+            saliency = saliency.mean(dim=_i, keepdim=True)
     values = saliency.flatten().sort()[0]
     n = len(values)
     idx = max(int(sparsity * n - 1), 0)
@@ -53,8 +68,10 @@ class PruneLayer(nn.Module):
     def forward(self, x: torch.Tensor):
         if not self._init:
             assert len(x.shape) > 1
+            with torch.no_grad():
+                m_example = self.callback(x, 0)
             self.mask = nn.Parameter(
-                torch.ones(*x.shape[1:], dtype=torch.bool),
+                torch.ones(*m_example.shape, dtype=torch.bool),
                 requires_grad=False,
             ).to(x.device)
             self._n_updates = nn.Parameter(
@@ -95,7 +112,8 @@ class PruneLayer(nn.Module):
                     )
         if self.training:
             self._n_updates += 1
-        return x * self.mask.expand((x.shape[0],) + tuple(self.mask.shape))
+
+        return x * self.mask.expand(x.shape)
 
 
 def prune(
