@@ -96,17 +96,20 @@ class PruneLayer(nn.Module):
             )
             self._init = True
 
-        if any(
-            [(0 <= (s - self._n_updates) <= self.buffer_size) for s in self.schedules]
-        ):
+        def should_prune(n):
+            return any([(0 <= (s - n) <= self.buffer_size) for s in self.schedules])
+
+        if should_prune(self._n_updates):
             self.buffer.append(x.detach().abs().mean(dim=0, keepdim=True).to("cpu"))
         else:
             self.buffer.clear()
 
+        # add buffer size check to avoid prune a layer which always set to eval
         if (
             (self._n_updates > self.start)
             and (self._cur_sparsity < self.sparsity)
             and self.training
+            and len(self.buffer) > 0
         ):
             if ((self._n_updates - self.start) % self.interval) == 0:
                 ratio = (
@@ -126,6 +129,9 @@ class PruneLayer(nn.Module):
                     print(
                         f"[Prune @ {self.name} Step {self._n_updates.item()}] active {active_ratio:.02f}, pruned {1 - active_ratio:.02f}, buffer_size = {len(self.buffer)}"
                     )
+                    if not should_prune(self._n_updates + 1):
+                        # proactively free up memory
+                        self.buffer.clear()
         if self.training:
             self._n_updates += 1
 

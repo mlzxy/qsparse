@@ -143,7 +143,8 @@ class QuantizeLayer(nn.Module):
             if self.interval <= 0:
                 self.buffer.clear()
 
-        if self.training or (not self._quantized):
+        # add buffer size check to avoid quantize a layer which always set to eval
+        if (self.training or (not self._quantized)) and (len(self.buffer) > 0):
             if (self._n_updates == self.timeout and not self._quantized) or (
                 self._n_updates > self.timeout
                 and ((self._n_updates - self.timeout) % self.interval) == 0
@@ -177,10 +178,14 @@ class QuantizeLayer(nn.Module):
 
                 self._quantized = True
 
-        if self._n_updates < self.timeout:
-            out = x
-        else:
+                # proactively free up memory
+                if self.interval <= 0:
+                    self.buffer.clear()
+
+        if self._n_updates >= self.timeout and self._quantized:
             out = self.callback(x, self.bits, self.decimal, self.channelwise)
+        else:
+            out = x
 
         if self.training:
             self._n_updates += 1
