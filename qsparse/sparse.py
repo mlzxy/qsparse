@@ -82,7 +82,7 @@ class PruneLayer(nn.Module):
         if not self._init:
             assert len(x.shape) > 1
             with torch.no_grad():
-                m_example = self.callback([x], 0)
+                m_example = self.callback([x.detach().abs().mean(0, keepdim=True)], 0)
             self.mask = nn.Parameter(
                 torch.ones(*m_example.shape, dtype=torch.bool).to(x.device),
                 requires_grad=False,
