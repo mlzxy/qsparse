@@ -150,8 +150,8 @@ class QuantizeLayer(nn.Module):
                 and ((self._n_updates - self.timeout) % self.interval) == 0
                 and self.interval > 0
             ):
-                print(f"Quantizing {self.name} (channelwise)")
                 if self.channelwise >= 0:
+                    print(f"Quantizing {self.name} (channelwise)")
                     for i in range(x.shape[self.channelwise]):
                         n = arg_decimal_min_mse(
                             x[
