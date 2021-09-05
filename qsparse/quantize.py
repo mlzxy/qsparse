@@ -141,7 +141,7 @@ class QuantizeLayer(nn.Module):
             self.buffer.append(x.detach().to("cpu"))
 
         if self.training or (not self._quantized):
-            if self._n_updates == self.timeout or (
+            if (self._n_updates == self.timeout and not self._quantized) or (
                 self._n_updates > self.timeout
                 and ((self._n_updates - self.timeout) % self.interval) == 0
                 and self.interval > 0

@@ -1,5 +1,5 @@
 from collections import deque
-from typing import Iterable, Union, List
+from typing import Iterable, List, Union
 
 import torch
 import torch.nn as nn
