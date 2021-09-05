@@ -100,6 +100,8 @@ class PruneLayer(nn.Module):
             [(0 <= (s - self._n_updates) <= self.buffer_size) for s in self.schedules]
         ):
             self.buffer.append(x.detach().abs().mean(dim=0, keepdim=True).to("cpu"))
+        else:
+            self.buffer.clear()
 
         if (
             (self._n_updates > self.start)
