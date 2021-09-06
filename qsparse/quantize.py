@@ -84,7 +84,7 @@ class QuantizeLayer(nn.Module):
         self,
         bits: int = 8,
         channelwise: int = 1,
-        decimal_range: Tuple[int, int] = (1, 20),
+        decimal_range: Tuple[int, int] = (0, 20),
         # for step-wise training
         timeout: int = 1000,
         interval: int = -1,
@@ -196,7 +196,7 @@ def quantize(
     arg: OptionalTensorOrModule = None,
     bits: int = 8,
     channelwise: int = 1,
-    decimal_range: Tuple[int, int] = (1, 20),
+    decimal_range: Tuple[int, int] = (0, 20),
     # for tensor computation
     decimal: Optional[TensorOrInt] = None,
     # for step-wise training
