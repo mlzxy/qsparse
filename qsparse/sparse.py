@@ -59,7 +59,7 @@ class PruneLayer(nn.Module):
     ):
         super().__init__()
         print(
-            f"[Prune @ {name} Args] start = {start} interval = {interval} repetition = {repetition} sparsity = {sparsity} buffer_size = {buffer_size}"
+            f"[Prune @ {name} Args] start = {start} interval = {interval} repetition = {repetition} sparsity = {sparsity} buffer_size = {buffer_size} collapse = {collapse} "
         )
         self.schedules = [start + interval * (1 + i) for i in range(repetition)]
         self.buffer = deque(maxlen=buffer_size)

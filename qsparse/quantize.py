@@ -61,7 +61,7 @@ def linear_quantize_callback(
 
 
 def arg_decimal_min_mse(
-    tensor: torch.Tensor, bits: int, decimal_range: Tuple[int, int] = (1, 20)
+    tensor: torch.Tensor, bits: int, decimal_range: Tuple[int, int] = (0, 20)
 ):
     """
     calculate the best decimal point for quantizing tensor
