@@ -53,6 +53,7 @@ class PruneLayer(nn.Module):
         buffer_size: int = 1,
         # for customization
         callback: PruneCallback = unstructured_prune_callback,
+        collapse: int = 0,
         # for debug purpose
         name="",
     ):
@@ -69,6 +70,7 @@ class PruneLayer(nn.Module):
         self.name = name
         self.callback = callback
         self.buffer_size = buffer_size
+        self._collapse = collapse
         self._init = False
 
         for k in [
@@ -78,11 +80,17 @@ class PruneLayer(nn.Module):
         ]:
             self.register_parameter(k, None)
 
+    def collapse(self, x: torch.Tensor):
+        if self._collapse >= 0:
+            return x.detach().abs().mean(self._collapse, keepdim=True)
+        else:
+            return x.detach()
+
     def forward(self, x: torch.Tensor):
         if not self._init:
             assert len(x.shape) > 1
             with torch.no_grad():
-                m_example = self.callback([x.detach().abs().mean(0, keepdim=True)], 0)
+                m_example = self.callback([self.collapse(x)], 0)
             self.mask = nn.Parameter(
                 torch.ones(*m_example.shape, dtype=torch.bool).to(x.device),
                 requires_grad=False,
@@ -100,7 +108,7 @@ class PruneLayer(nn.Module):
             return any([(0 <= (s - n) <= self.buffer_size) for s in self.schedules])
 
         if should_prune(self._n_updates):
-            self.buffer.append(x.detach().abs().mean(dim=0, keepdim=True).to("cpu"))
+            self.buffer.append(self.collapse(x).to("cpu"))
         else:
             self.buffer.clear()
 
@@ -151,7 +159,7 @@ def prune(
     # for debug purpose
     name="",
 ) -> OptionalTensorOrModule:
-    def get_prune_layer():
+    def get_prune_layer(feature_collapse=0):
         return PruneLayer(
             start=int(start),
             sparsity=sparsity,
@@ -160,6 +168,7 @@ def prune(
             buffer_size=buffer_size,
             name=name,
             callback=callback,
+            collapse=feature_collapse,
         )
 
     if arg is None:
@@ -167,7 +176,7 @@ def prune(
     elif isinstance(arg, torch.Tensor):
         return callback(arg, sparsity)
     elif isinstance(arg, nn.Module):
-        return imitate(arg, "prune", get_prune_layer())
+        return imitate(arg, "prune", get_prune_layer(-1))
     else:
         raise ValueError(f"{arg} is not a valid argument for prune")
 
