@@ -108,13 +108,8 @@ class QuantizeLayer(nn.Module):
         self.interval = interval
         self.decimal_range = decimal_range
         self._init = False
-        self._quantized = False
 
-        for k in [
-            "decimal",
-            "_n_updates",
-            "bits",
-        ]:
+        for k in ["decimal", "_n_updates", "bits", "_quantized"]:
             self.register_parameter(k, None)
 
     def forward(self, x):
@@ -131,6 +126,10 @@ class QuantizeLayer(nn.Module):
             )
             self.bits = nn.Parameter(
                 torch.tensor(self._bits, dtype=torch.int).to(x.device),
+                requires_grad=False,
+            )
+            self._quantized = nn.Parameter(
+                torch.tensor([False], dtype=torch.bool).to(x.device),
                 requires_grad=False,
             )
             self._init = True
@@ -176,13 +175,13 @@ class QuantizeLayer(nn.Module):
                     print(f"{self.name} decimal = {n}")
                     self.decimal.data[:] = n
 
-                self._quantized = True
+                self._quantized[0] = True
 
                 # proactively free up memory
                 if self.interval <= 0:
                     self.buffer.clear()
 
-        if self._n_updates >= self.timeout and self._quantized:
+        if self._quantized:
             out = self.callback(x, self.bits, self.decimal, self.channelwise)
         else:
             out = x
