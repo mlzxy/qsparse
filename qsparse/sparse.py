@@ -78,7 +78,16 @@ class PruneLayer(nn.Module):
             "_n_updates",
             "_cur_sparsity",
         ]:
-            self.register_parameter(k, None)
+            self.register_parameter(
+                k,
+                nn.Parameter(
+                    torch.tensor(-1, dtype=torch.int), requires_grad=False
+                ),  # placeholder
+            )
+
+    @property
+    def initted(self) -> bool:
+        return self._n_updates.item() != -1
 
     def collapse(self, x: torch.Tensor):
         if self._collapse >= 0:
@@ -87,7 +96,7 @@ class PruneLayer(nn.Module):
             return x.detach()
 
     def forward(self, x: torch.Tensor):
-        if not self._init:
+        if not self.initted:
             assert len(x.shape) > 1
             with torch.no_grad():
                 m_example = self.callback([self.collapse(x)], 0)
@@ -102,7 +111,6 @@ class PruneLayer(nn.Module):
             self._cur_sparsity = nn.Parameter(
                 torch.zeros(1).to(x.device), requires_grad=False
             )
-            self._init = True
 
         def should_prune(n):
             return any([(0 <= (s - n) <= self.buffer_size) for s in self.schedules])

@@ -107,13 +107,21 @@ class QuantizeLayer(nn.Module):
         self.callback = callback
         self.interval = interval
         self.decimal_range = decimal_range
-        self._init = False
 
         for k in ["decimal", "_n_updates", "bits", "_quantized"]:
-            self.register_parameter(k, None)
+            self.register_parameter(
+                k,
+                nn.Parameter(
+                    torch.tensor(-1, dtype=torch.int), requires_grad=False
+                ),  # placeholder
+            )
+
+    @property
+    def initted(self) -> bool:
+        return self._n_updates.item() != -1
 
     def forward(self, x):
-        if not self._init:
+        if not self.initted:
             self.decimal = nn.Parameter(
                 torch.ones(1 if self.channelwise < 0 else x.shape[self.channelwise]).to(
                     x.device
@@ -132,7 +140,6 @@ class QuantizeLayer(nn.Module):
                 torch.tensor([False], dtype=torch.bool).to(x.device),
                 requires_grad=False,
             )
-            self._init = True
 
         if (
             (self.timeout - self.buffer_size) < self._n_updates <= self.timeout
