@@ -1,3 +1,4 @@
+import math
 from collections import deque
 from typing import Optional, Tuple
 
@@ -15,6 +16,27 @@ from qsparse.imitation import imitate
 __all__ = [
     "quantize",
 ]
+
+
+def approx_quantile(t: torch.Tensor, fraction: float) -> float:
+    # https://github.com/pytorch/pytorch/blob/master/aten/src/ATen/native/Sorting.cpp#L221
+    size = t.numel()
+    bound = 2 ** 24
+    if size <= bound:
+        return torch.quantile(t, fraction)
+    else:
+        t = t.view(-1)
+        qs = []
+        num_chunks = math.ceil(size / bound)
+        for i in range(num_chunks):
+            if i == (num_chunks - 1):
+                chunk = t[
+                    size - bound :
+                ]  # ensure won't be biased if the last chunk is very small
+            else:
+                chunk = t[i * bound : (i + 1) * bound]
+            qs.append(torch.quantile(chunk, fraction))
+        return sum(qs) / len(qs)
 
 
 class LinearQuantization(torch.autograd.Function):
@@ -79,8 +101,8 @@ def arg_decimal_min_mse(
         ), f"illegal saturate_range {saturate_range}"
         tensor = torch.clamp(
             tensor,
-            torch.quantile(tensor, saturate_range[0]),
-            torch.quantile(tensor, saturate_range[1]),
+            approx_quantile(tensor, saturate_range[0]),
+            approx_quantile(tensor, saturate_range[1]),
         )
     for n in range(*decimal_range):
         tensor_q = quantize(tensor, bits, decimal=n)
