@@ -61,7 +61,10 @@ def linear_quantize_callback(
 
 
 def arg_decimal_min_mse(
-    tensor: torch.Tensor, bits: int, decimal_range: Tuple[int, int] = (0, 20)
+    tensor: torch.Tensor,
+    bits: int,
+    decimal_range: Tuple[int, int] = (0, 20),
+    saturate_range: Tuple[float, float] = (0, 1),
 ):
     """
     calculate the best decimal point for quantizing tensor
@@ -70,6 +73,15 @@ def arg_decimal_min_mse(
     best_n = None
     assert len(decimal_range) == 2
     tensor = tensor.reshape(-1)  # flatten
+    if saturate_range != (0, 1):
+        assert (
+            0 <= saturate_range[0] <= saturate_range[1] <= 1
+        ), f"illegal saturate_range {saturate_range}"
+        tensor = torch.clamp(
+            tensor,
+            torch.quantile(tensor, saturate_range[0]),
+            torch.quantile(tensor, saturate_range[1]),
+        )
     for n in range(*decimal_range):
         tensor_q = quantize(tensor, bits, decimal=n)
         err_ = torch.sum((tensor - tensor_q) ** 2).item()
