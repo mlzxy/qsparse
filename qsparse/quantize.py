@@ -196,6 +196,7 @@ class QuantizeLayer(nn.Module):
                         self.saturate_range,
                     )
                     print(f"{self.name} decimal = {n}")
+
                     self.decimal.data[:] = n
 
                 self._quantized[0] = True
