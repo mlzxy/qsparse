@@ -97,6 +97,7 @@ class QuantizeLayer(nn.Module):
         bits: int = 8,
         channelwise: int = 1,
         decimal_range: Tuple[int, int] = (0, 20),
+        saturate_range: Tuple[float, float] = (0, 1),
         # for step-wise training
         timeout: int = 1000,
         interval: int = -1,
@@ -119,6 +120,7 @@ class QuantizeLayer(nn.Module):
         self.callback = callback
         self.interval = interval
         self.decimal_range = decimal_range
+        self.saturate_range = saturate_range
 
         for k in ["decimal", "_n_updates", "bits", "_quantized"]:
             self.register_parameter(
@@ -182,6 +184,7 @@ class QuantizeLayer(nn.Module):
                             ],
                             self.bits,
                             self.decimal_range,
+                            self.saturate_range,
                         )
                         # print(f"{self.name} decimal for channel {i} = {n}")
                         self.decimal.data[i] = n
@@ -190,6 +193,7 @@ class QuantizeLayer(nn.Module):
                         torch.cat([a.view(-1) for a in self.buffer], dim=0),
                         self.bits,
                         self.decimal_range,
+                        self.saturate_range,
                     )
                     print(f"{self.name} decimal = {n}")
                     self.decimal.data[:] = n
@@ -215,6 +219,7 @@ def quantize(
     bits: int = 8,
     channelwise: int = 1,
     decimal_range: Tuple[int, int] = (0, 20),
+    saturate_range: Tuple[float, float] = (0, 1),
     # for tensor computation
     decimal: Optional[TensorOrInt] = None,
     # for step-wise training
@@ -231,6 +236,7 @@ def quantize(
             bits=bits,
             channelwise=channelwise,
             decimal_range=decimal_range,
+            saturate_range=saturate_range,
             timeout=int(timeout),
             interval=int(interval),
             buffer_size=buffer_size,
