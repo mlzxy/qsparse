@@ -1,4 +1,5 @@
 import math
+import warnings
 from collections import deque
 from typing import Optional, Tuple
 
@@ -192,33 +193,45 @@ class QuantizeLayer(nn.Module):
                 and ((self._n_updates - self.timeout) % self.interval) == 0
                 and self.interval > 0
             ):
+                if len(self.buffer) < self.buffer_size:
+                    warnings.warn(
+                        f"buffer is not full when quantization, this will cause performance degradation! (buffer has {len(self.buffer)} elements while buffer_size parameter is {self.buffer_size})"
+                    )
                 if self.channelwise >= 0:
-                    print(f"Quantizing {self.name} (channelwise)")
                     for i in range(x.shape[self.channelwise]):
                         n = arg_decimal_min_mse(
-                            x[
-                                tuple(
-                                    [
-                                        slice(0, cs) if ci != self.channelwise else i
-                                        for ci, cs in enumerate(x.shape)
-                                    ]
-                                )
-                            ],
+                            torch.cat(
+                                [
+                                    a[
+                                        tuple(
+                                            [
+                                                slice(0, cs)
+                                                if ci != self.channelwise
+                                                else i
+                                                for ci, cs in enumerate(x.shape)
+                                            ]
+                                        )
+                                    ].reshape(-1)
+                                    for a in self.buffer
+                                ],
+                                dim=0,
+                            ),
                             self.bits,
                             self.decimal_range,
                             self.saturate_range,
                         )
-                        # print(f"{self.name} decimal for channel {i} = {n}")
                         self.decimal.data[i] = n
+                    print(
+                        f"{self.name} (channelwise) avg decimal = {self.decimal.float().mean().item()}"
+                    )
                 else:
                     n = arg_decimal_min_mse(
-                        torch.cat([a.view(-1) for a in self.buffer], dim=0),
+                        torch.cat([a.reshape(-1) for a in self.buffer], dim=0),
                         self.bits,
                         self.decimal_range,
                         self.saturate_range,
                     )
                     print(f"{self.name} decimal = {n}")
-
                     self.decimal.data[:] = n
 
                 self._quantized[0] = True
