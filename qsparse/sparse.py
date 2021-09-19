@@ -1,3 +1,4 @@
+import warnings
 from collections import deque
 from typing import Iterable, List, Union
 
@@ -51,6 +52,7 @@ class PruneLayer(nn.Module):
         interval: int = 1000,
         repetition: int = 4,
         buffer_size: int = 1,
+        strict: bool = True,
         # for customization
         callback: PruneCallback = unstructured_prune_callback,
         collapse: int = 0,
@@ -71,6 +73,7 @@ class PruneLayer(nn.Module):
         self.callback = callback
         self.buffer_size = buffer_size
         self._collapse = collapse
+        self.strict = strict
         self._init = False
 
         for k in [
@@ -113,12 +116,14 @@ class PruneLayer(nn.Module):
             )
 
         def should_prune(n):
-            return any([(0 <= (s - n) <= self.buffer_size) for s in self.schedules])
+            cond = any([(0 <= (s - n) <= self.buffer_size) for s in self.schedules])
+            if self.strict:
+                return cond
+            else:
+                return cond and self.training
 
         if should_prune(self._n_updates):
             self.buffer.append(self.collapse(x).to("cpu"))
-        else:
-            self.buffer.clear()
 
         # add buffer size check to avoid prune a layer which always set to eval
         if (
@@ -145,13 +150,42 @@ class PruneLayer(nn.Module):
                     print(
                         f"[Prune @ {self.name} Step {self._n_updates.item()}] active {active_ratio:.02f}, pruned {1 - active_ratio:.02f}, buffer_size = {len(self.buffer)}"
                     )
+                    if len(self.buffer) < self.buffer_size:
+                        warnings.warn(
+                            f"buffer is not full when pruning, this will cause performance degradation! (buffer has {len(self.buffer)} elements while buffer_size parameter is {self.buffer_size})"
+                        )
                     if not should_prune(self._n_updates + 1):
                         # proactively free up memory
                         self.buffer.clear()
         if self.training:
             self._n_updates += 1
 
-        return x * self.mask.expand(x.shape)
+        if self.strict or self.training:
+            return x * self.mask.expand(x.shape)
+        else:
+            mask = self.mask
+            if len(self.mask.shape) != len(x.shape):
+                if len(self.mask.shape) == (len(x.shape) - 1):
+                    mask = mask.view(1, *mask.shape)
+                else:
+                    raise RuntimeError(
+                        f"mask shape not matched: mask {mask.shape} vs input {x.shape}"
+                    )
+            target_shape = x.shape[1:]
+            final_mask = torch.ones(
+                (1,) + target_shape, device=x.device, dtype=mask.dtype
+            )
+            repeats = [x.shape[i] // mask.shape[i] for i in range(1, len(x.shape))]
+            mask = mask.repeat(1, *repeats)
+            slices = [0] + [
+                slice(
+                    (x.shape[i] - mask.shape[i]) // 2,
+                    (x.shape[i] - mask.shape[i]) // 2 + mask.shape[i],
+                )
+                for i in range(1, len(x.shape))
+            ]
+            final_mask[slices] = mask[0, :]
+            return x * final_mask
 
 
 def prune(
@@ -162,6 +196,7 @@ def prune(
     interval: int = 1000,
     repetition: int = 4,
     buffer_size: int = 1,
+    strict: bool = True,
     # for customization
     callback: PruneCallback = unstructured_prune_callback,
     # for debug purpose
@@ -175,6 +210,7 @@ def prune(
             repetition=repetition,
             buffer_size=buffer_size,
             name=name,
+            strict=strict,
             callback=callback,
             collapse=feature_collapse,
         )
