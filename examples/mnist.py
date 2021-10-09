@@ -47,14 +47,12 @@ def create_p_q(train_mode, epoch_size):
                 quantize(
                     timeout=epoch_size * (3 if quantize_first else 8),
                     channelwise=-1,
-                    buffer_size=bs,
                     decimal_range=(1, 7),
                 )
                 if len(args) == 0
                 else quantize(
                     args[0],
                     timeout=epoch_size * (2 if quantize_first else 7),
-                    buffer_size=1,
                     channelwise=c or 1,
                 )
             )
@@ -69,9 +67,9 @@ def create_p_q(train_mode, epoch_size):
             "sparsity": 0.5,
         }
         if "weight" in train_mode:
-            return identity if len(args) == 0 else prune(args[0], **kw, buffer_size=1)
+            return identity if len(args) == 0 else prune(args[0], **kw)
         elif "feat" in train_mode:
-            return prune(**kw, buffer_size=bs) if len(args) == 0 else args[0]
+            return prune(**kw, window_size=bs) if len(args) == 0 else args[0]
         else:
             return bypass(*args)
 

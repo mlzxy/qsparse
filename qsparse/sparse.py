@@ -51,7 +51,7 @@ class PruneLayer(nn.Module):
         start: int = 1000,
         interval: int = 1000,
         repetition: int = 4,
-        buffer_size: int = 1,
+        window_size: int = 1,
         strict: bool = True,
         # for customization
         callback: PruneCallback = unstructured_prune_callback,
@@ -61,17 +61,17 @@ class PruneLayer(nn.Module):
     ):
         super().__init__()
         print(
-            f"[Prune @ {name} Args] start = {start} interval = {interval} repetition = {repetition} sparsity = {sparsity} buffer_size = {buffer_size} collapse = {collapse} "
+            f"[Prune @ {name} Args] start = {start} interval = {interval} repetition = {repetition} sparsity = {sparsity} window_size = {window_size} collapse = {collapse} "
         )
         self.schedules = [start + interval * (1 + i) for i in range(repetition)]
-        self.buffer = deque(maxlen=buffer_size)
+        self.window = deque(maxlen=window_size)
         self.start = start
         self.interval = interval
         self.repetition = repetition
         self.sparsity = sparsity
         self.name = name
         self.callback = callback
-        self.buffer_size = buffer_size
+        self.window_size = window_size
         self._collapse = collapse
         self.strict = strict
         self._init = False
@@ -92,17 +92,18 @@ class PruneLayer(nn.Module):
     def initted(self) -> bool:
         return self._n_updates.item() != -1
 
-    def collapse(self, x: torch.Tensor):
-        if self._collapse >= 0:
-            return x.detach().abs().mean(self._collapse, keepdim=True)
-        else:
-            return x.detach()
-
     def forward(self, x: torch.Tensor):
         if not self.initted:
             assert len(x.shape) > 1
             with torch.no_grad():
-                m_example = self.callback([self.collapse(x)], 0)
+                m_example = self.callback(
+                    [
+                        x.detach()
+                        if self._collapse < 0
+                        else x.mean(self._collapse, keepdim=True)
+                    ],
+                    0,
+                )
             self.mask = nn.Parameter(
                 torch.ones(*m_example.shape, dtype=torch.bool).to(x.device),
                 requires_grad=False,
@@ -116,21 +117,25 @@ class PruneLayer(nn.Module):
             )
 
         def should_prune(n):
-            cond = any([(0 <= (s - n) <= self.buffer_size) for s in self.schedules])
+            cond = any([(0 <= (s - n) <= self.window_size) for s in self.schedules])
             if self.strict:
                 return cond
             else:
                 return cond and self.training
 
         if should_prune(self._n_updates):
-            self.buffer.append(self.collapse(x).to("cpu"))
+            if self._collapse >= 0:
+                for t in torch.split(x.abs().detach().to("cpu"), 1, dim=self._collapse):
+                    self.window.append(t)
+            else:
+                self.window.append(x.abs().detach().to("cpu"))
 
-        # add buffer size check to avoid prune a layer which always set to eval
+        # add window size check to avoid prune a layer which always set to eval
         if (
             (self._n_updates > self.start)
             and (self._cur_sparsity < self.sparsity)
             and self.training
-            and len(self.buffer) > 0
+            and len(self.window) > 0
         ):
             if ((self._n_updates - self.start) % self.interval) == 0:
                 ratio = (
@@ -142,21 +147,21 @@ class PruneLayer(nn.Module):
 
                 if self._cur_sparsity > 0:
                     self.mask.data = self.callback(
-                        self.buffer,
+                        self.window,
                         self._cur_sparsity.item(),
                     ).to(x.device)
 
                     active_ratio = self.mask.sum().item() / self.mask.size().numel()
                     print(
-                        f"[Prune @ {self.name} Step {self._n_updates.item()}] active {active_ratio:.02f}, pruned {1 - active_ratio:.02f}, buffer_size = {len(self.buffer)}"
+                        f"[Prune @ {self.name} Step {self._n_updates.item()}] active {active_ratio:.02f}, pruned {1 - active_ratio:.02f}, window_size = {len(self.window)}"
                     )
-                    if len(self.buffer) < self.buffer_size:
+                    if len(self.window) < self.window_size:
                         warnings.warn(
-                            f"buffer is not full when pruning, this will cause performance degradation! (buffer has {len(self.buffer)} elements while buffer_size parameter is {self.buffer_size})"
+                            f"window is not full when pruning, this will cause performance degradation! (window has {len(self.window)} elements while window_size parameter is {self.window_size})"
                         )
                     if not should_prune(self._n_updates + 1):
                         # proactively free up memory
-                        self.buffer.clear()
+                        self.window.clear()
         if self.training:
             self._n_updates += 1
 
@@ -195,7 +200,7 @@ def prune(
     start: int = 1000,
     interval: int = 1000,
     repetition: int = 4,
-    buffer_size: int = 1,
+    window_size: int = 1,
     strict: bool = True,
     # for customization
     callback: PruneCallback = unstructured_prune_callback,
@@ -208,7 +213,7 @@ def prune(
             sparsity=sparsity,
             interval=int(interval),
             repetition=repetition,
-            buffer_size=buffer_size,
+            window_size=window_size,
             name=name,
             strict=strict,
             callback=callback,
