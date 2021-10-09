@@ -13,6 +13,7 @@ from qsparse.common import (
     ensure_tensor,
 )
 from qsparse.imitation import imitate
+from qsparse.util import nd_slice
 
 __all__ = [
     "quantize",
@@ -124,24 +125,26 @@ class QuantizeLayer(nn.Module):
         # for step-wise training
         timeout: int = 1000,
         interval: int = -1,
-        buffer_size: int = 1,
+        window_size: int = 1,
         # for customization
         callback: QuantizeCallback = linear_quantize_callback,
         # for debug purpose
+        collapse: int = 0,
         name: str = "",
     ):
         super().__init__()
         print(
-            f"[Quantize @ {name}] bits={bits} channelwise={channelwise} buffer_size={buffer_size} timeout={timeout}"
+            f"[Quantize @ {name}] bits={bits} channelwise={channelwise} window_size={window_size} timeout={timeout}"
         )
-        self.buffer = deque(maxlen=buffer_size)
-        self.buffer_size = buffer_size
+        self.window = deque(maxlen=window_size)
+        self.window_size = window_size
         self.name = name
         self.channelwise = channelwise
         self.timeout = timeout
         self._bits = bits
         self.callback = callback
         self.interval = interval
+        self._collapse = collapse
         self.decimal_range = decimal_range
         self.saturate_range = saturate_range
 
@@ -179,23 +182,32 @@ class QuantizeLayer(nn.Module):
             )
 
         if (
-            (self.timeout - self.buffer_size) < self._n_updates <= self.timeout
-        ):  # only collecting buffer when needed to speedup
-            self.buffer.append(x.detach().to("cpu"))
+            (self.timeout - self.window_size) < self._n_updates <= self.timeout
+        ):  # only collecting when needed to speedup
+            if self._collapse >= 0:
+                for t in (
+                    x[nd_slice(len(x.shape), self._collapse, end=self.window_size)]
+                    .abs()
+                    .detach()
+                    .split(1)
+                ):  # type: torch.Tensor
+                    self.window.append(t.to("cpu"))
+            else:
+                self.window.append(x.detach().to("cpu"))
         else:
             if self.interval <= 0:
-                self.buffer.clear()
+                self.window.clear()
 
-        # add buffer size check to avoid quantize a layer which always set to eval
-        if (self.training or (not self._quantized)) and (len(self.buffer) > 0):
+        # add window size check to avoid quantize a layer which always set to eval
+        if (self.training or (not self._quantized)) and (len(self.window) > 0):
             if (self._n_updates == self.timeout and not self._quantized) or (
                 self._n_updates > self.timeout
                 and ((self._n_updates - self.timeout) % self.interval) == 0
                 and self.interval > 0
             ):
-                if len(self.buffer) < self.buffer_size:
+                if len(self.window) < self.window_size:
                     warnings.warn(
-                        f"buffer is not full when quantization, this will cause performance degradation! (buffer has {len(self.buffer)} elements while buffer_size parameter is {self.buffer_size})"
+                        f"window is not full when quantization, this will cause performance degradation! (window has {len(self.window)} elements while window_size parameter is {self.window_size})"
                     )
                 if self.channelwise >= 0:
                     for i in range(x.shape[self.channelwise]):
@@ -212,7 +224,7 @@ class QuantizeLayer(nn.Module):
                                             ]
                                         )
                                     ].reshape(-1)
-                                    for a in self.buffer
+                                    for a in self.window
                                 ],
                                 dim=0,
                             ),
@@ -226,7 +238,7 @@ class QuantizeLayer(nn.Module):
                     )
                 else:
                     n = arg_decimal_min_mse(
-                        torch.cat([a.reshape(-1) for a in self.buffer], dim=0),
+                        torch.cat([a.reshape(-1) for a in self.window], dim=0),
                         self.bits,
                         self.decimal_range,
                         self.saturate_range,
@@ -238,7 +250,7 @@ class QuantizeLayer(nn.Module):
 
                 # proactively free up memory
                 if self.interval <= 0:
-                    self.buffer.clear()
+                    self.window.clear()
 
         if self._quantized:
             out = self.callback(x, self.bits, self.decimal, self.channelwise)
@@ -261,13 +273,13 @@ def quantize(
     # for step-wise training
     timeout: int = 1000,
     interval: int = -1,
-    buffer_size: int = 1,
+    window_size: int = 1,
     # for customization
     callback: QuantizeCallback = linear_quantize_callback,
     # for debug purpose
     name: str = "",
 ) -> OptionalTensorOrModule:
-    def get_quantize_layer():
+    def get_quantize_layer(feature_collapse=0):
         return QuantizeLayer(
             bits=bits,
             channelwise=channelwise,
@@ -275,9 +287,10 @@ def quantize(
             saturate_range=saturate_range,
             timeout=int(timeout),
             interval=int(interval),
-            buffer_size=buffer_size,
+            window_size=window_size,
             callback=callback,
             name=name,
+            collapse=feature_collapse,
         )
 
     if arg is None:
@@ -288,7 +301,7 @@ def quantize(
         ), "decimal points for the input tensor must be provided"
         return linear_quantize_callback(arg, bits, decimal, channelwise)
     elif isinstance(arg, nn.Module):
-        return imitate(arg, "quantize", get_quantize_layer())
+        return imitate(arg, "quantize", get_quantize_layer(-1))
     else:
         raise ValueError(f"{arg} is not a valid argument for quantize")
 

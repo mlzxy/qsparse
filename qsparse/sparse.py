@@ -7,6 +7,7 @@ import torch.nn as nn
 
 from qsparse.common import OptionalTensorOrModule, PruneCallback
 from qsparse.imitation import imitate
+from qsparse.util import nd_slice
 
 __all__ = ["prune", "unstructured_prune_callback", "structured_prune_callback"]
 
@@ -125,8 +126,13 @@ class PruneLayer(nn.Module):
 
         if should_prune(self._n_updates):
             if self._collapse >= 0:
-                for t in torch.split(x.abs().detach().to("cpu"), 1, dim=self._collapse):
-                    self.window.append(t)
+                for t in (
+                    x[nd_slice(len(x.shape), self._collapse, end=self.window_size)]
+                    .abs()
+                    .detach()
+                    .split(1)
+                ):  # type: torch.Tensor
+                    self.window.append(t.to("cpu"))
             else:
                 self.window.append(x.abs().detach().to("cpu"))
 

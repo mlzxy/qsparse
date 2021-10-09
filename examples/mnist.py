@@ -10,6 +10,7 @@ import sys
 from torchvision import datasets, transforms
 from torch.optim.lr_scheduler import StepLR
 from qsparse import prune, quantize
+from qsparse.util import auto_name_prune_quantize_layers
 from enum import Enum
 
 
@@ -45,14 +46,15 @@ def create_p_q(train_mode, epoch_size):
         if "quantize" in train_mode:
             return (
                 quantize(
-                    timeout=epoch_size * (3 if quantize_first else 8),
+                    timeout=epoch_size * (3 if quantize_first else 2),
                     channelwise=-1,
                     decimal_range=(1, 7),
+                    window_size=bs,
                 )
                 if len(args) == 0
                 else quantize(
                     args[0],
-                    timeout=epoch_size * (2 if quantize_first else 7),
+                    timeout=epoch_size * (2 if quantize_first else 1),
                     channelwise=c or 1,
                 )
             )
@@ -61,8 +63,8 @@ def create_p_q(train_mode, epoch_size):
 
     def p(*args):
         kw = {
-            "start": epoch_size * (4 if quantize_first else 2),
-            "interval": epoch_size * 1,
+            "start": epoch_size * (4 if quantize_first else 0.5),
+            "interval": epoch_size * 0.4,
             "repetition": 3,
             "sparsity": 0.5,
         }
@@ -256,6 +258,7 @@ def main():
     test_loader = torch.utils.data.DataLoader(dataset2, **test_kwargs)
     print(f"training epoch size = {len(train_loader)}")
     model = Net(train_mode=args.train_mode, epoch_size=len(train_loader)).to(device)
+    auto_name_prune_quantize_layers(model)
     optimizer = optim.Adadelta(model.parameters(), lr=args.lr)
     scheduler = StepLR(optimizer, step_size=1, gamma=args.gamma)
     for epoch in range(1, args.epochs + 1):
