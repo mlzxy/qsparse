@@ -276,22 +276,27 @@ def quantize(
     window_size: int = 1,
     # for customization
     callback: QuantizeCallback = linear_quantize_callback,
+    # for bias quantization, default to -1 is to not quantize bias
+    bias_bits: int = -1,
     # for debug purpose
     name: str = "",
 ) -> OptionalTensorOrModule:
-    def get_quantize_layer(feature_collapse=0):
-        return QuantizeLayer(
-            bits=bits,
-            channelwise=channelwise,
-            decimal_range=decimal_range,
-            saturate_range=saturate_range,
-            timeout=int(timeout),
-            interval=int(interval),
-            window_size=window_size,
-            callback=callback,
-            name=name,
-            collapse=feature_collapse,
-        )
+    def get_quantize_layer(feature_collapse=0, is_bias=False):
+        if bias_bits == -1 and is_bias:
+            return lambda a: a
+        else:
+            return QuantizeLayer(
+                bits=bias_bits if is_bias else bits,
+                channelwise=0 if is_bias else channelwise,
+                decimal_range=decimal_range,
+                saturate_range=saturate_range,
+                timeout=int(timeout),
+                interval=int(interval),
+                window_size=window_size,
+                callback=callback,
+                name=name,
+                collapse=feature_collapse,
+            )
 
     if arg is None:
         return get_quantize_layer()
@@ -301,7 +306,12 @@ def quantize(
         ), "decimal points for the input tensor must be provided"
         return linear_quantize_callback(arg, bits, decimal, channelwise)
     elif isinstance(arg, nn.Module):
-        return imitate(arg, "quantize", get_quantize_layer(-1))
+        return imitate(
+            arg,
+            "quantize",
+            get_quantize_layer(-1),
+            get_quantize_layer(-1, is_bias=True),
+        )
     else:
         raise ValueError(f"{arg} is not a valid argument for quantize")
 

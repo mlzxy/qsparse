@@ -56,6 +56,7 @@ def create_p_q(train_mode, epoch_size):
                     args[0],
                     timeout=epoch_size * (2 if quantize_first else 1),
                     channelwise=c or 1,
+                    bias_bits=20,
                 )
             )
         else:
