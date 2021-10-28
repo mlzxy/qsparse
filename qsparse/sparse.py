@@ -15,6 +15,16 @@ __all__ = ["prune", "unstructured_prune_callback", "structured_prune_callback"]
 def unstructured_prune_callback(
     inp: List[torch.Tensor], sparsity: float
 ) -> torch.Tensor:
+    """unstructured pruning function with type signature of
+    :class:`PruneCallback`
+
+    Args:
+        inp (List[torch.Tensor]): input tensor
+        sparsity (float): target sparsity
+
+    Returns:
+        torch.Tensor: binary mask
+    """
     inp = torch.cat([v.view(1, *v.shape) for v in inp], dim=0)
     saliency = inp.abs().mean(dim=0)
     values = saliency.flatten().sort()[0]
@@ -28,6 +38,18 @@ def unstructured_prune_callback(
 def structured_prune_callback(
     inp: List[torch.Tensor], sparsity: float, prunable: Union[Iterable[int], int] = {1}
 ) -> torch.Tensor:
+    """structured pruning function with type signature of
+    :class:`PruneCallback`
+
+    Args:
+        inp (List[torch.Tensor]): input tensor
+        sparsity (float): target sparsity
+        prunable (Union[Iterable[int], int], optional): dimension indexes that are prunable. Defaults to {1}, which corresponds to channel dimension.
+
+    Returns:
+        torch.Tensor: binary mask
+    """
+
     prunables = {prunable} if isinstance(prunable, int) else prunable
     saliency_lst = []
     for saliency in inp:
@@ -60,6 +82,10 @@ class PruneLayer(nn.Module):
         # for debug purpose
         name="",
     ):
+        """Applies pruning over input tensor.
+
+        Please look for detailed description in :func:`prune`
+        """
         super().__init__()
         print(
             f"[Prune @ {name} Args] start = {start} interval = {interval} repetition = {repetition} sparsity = {sparsity} window_size = {window_size} collapse = {collapse} "
@@ -200,7 +226,7 @@ class PruneLayer(nn.Module):
 
 
 def prune(
-    arg: OptionalTensorOrModule = None,
+    inp: nn.Module = None,
     sparsity: float = 0.5,
     # for step-wise training
     start: int = 1000,
@@ -212,7 +238,27 @@ def prune(
     callback: PruneCallback = unstructured_prune_callback,
     # for debug purpose
     name="",
-) -> OptionalTensorOrModule:
+) -> nn.Module:
+    """Creates a :class:`PruneLayer` which is usually used for feature pruning
+    if no input module is provided, or creates a weight-pruned version of the
+    input module.
+
+    Args:
+        inp (nn.Module, optional): input module whose weight is to be pruned. Defaults to None.
+        sparsity (float, optional): target sparsity. Defaults to 0.5.
+        start (int, optional): starting step to apply pruning. Defaults to 1000.
+        interval (int, optional): interval of steps between each pruning operation. Defaults to 1000.
+        repetition (int, optional): number of pruning operations. Defaults to 4.
+        window_size (int, optional): number of input tensors used for computing the binary mask. Defaults to 1, means only current input is used.
+        strict (bool, optional): whether enforcing the shape of the binary mask to be equal to the input tensor. Defaults to True.
+                                 When strict=False, it will try to expand the binary mask to matched the input tensor shape during evaluation, useful for tasks whose test images are larger, like super resolution.
+        callback (PruneCallback, optional): callback for actual pruning tensor operation, used for customization. Defaults to :func:`unstructured_prune_callback`.
+        name (str, optional): name of the prune layer created, used for better logging. Defaults to "".
+
+    Returns:
+        nn.Module: Input module with its weight pruned or a instance of :class:`PruneLayer` for feature pruning
+    """
+
     def get_prune_layer(feature_collapse=0):
         return PruneLayer(
             start=int(start),
@@ -226,14 +272,12 @@ def prune(
             collapse=feature_collapse,
         )
 
-    if arg is None:
+    if inp is None:
         return get_prune_layer()
-    elif isinstance(arg, torch.Tensor):
-        return callback(arg, sparsity)
-    elif isinstance(arg, nn.Module):
-        return imitate(arg, "prune", get_prune_layer(-1))
+    elif isinstance(inp, nn.Module):
+        return imitate(inp, "prune", get_prune_layer(-1))
     else:
-        raise ValueError(f"{arg} is not a valid argument for prune")
+        raise ValueError(f"{inp} is not a valid argument for prune")
 
 
 if __name__ == "__main__":
