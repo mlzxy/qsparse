@@ -249,14 +249,14 @@ def prune(
         start (int, optional): starting step to apply pruning. Defaults to 1000.
         interval (int, optional): interval of steps between each pruning operation. Defaults to 1000.
         repetition (int, optional): number of pruning operations. Defaults to 4.
-        window_size (int, optional): number of input tensors used for computing the binary mask. Defaults to 1, means only current input is used.
+        window_size (int, optional): number of input tensors used for computing the binary mask. Defaults to 1, means using only current input.
         strict (bool, optional): whether enforcing the shape of the binary mask to be equal to the input tensor. Defaults to True.
                                  When strict=False, it will try to expand the binary mask to matched the input tensor shape during evaluation, useful for tasks whose test images are larger, like super resolution.
-        callback (PruneCallback, optional): callback for actual pruning tensor operation, used for customization. Defaults to :func:`unstructured_prune_callback`.
+        callback (PruneCallback, optional): callback for actual operation of pruning tensor, used for customization. Defaults to :func:`unstructured_prune_callback`.
         name (str, optional): name of the prune layer created, used for better logging. Defaults to "".
 
     Returns:
-        nn.Module: Input module with its weight pruned or a instance of :class:`PruneLayer` for feature pruning
+        nn.Module: input module with its weight pruned or a instance of :class:`PruneLayer` for feature pruning
     """
 
     def get_prune_layer(feature_collapse=0):

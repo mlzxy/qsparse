@@ -1,7 +1,7 @@
 import math
 import warnings
 from collections import deque
-from typing import Optional, Tuple
+from typing import Tuple
 
 import torch
 import torch.nn as nn
@@ -21,7 +21,18 @@ __all__ = [
 
 
 def approx_quantile(t: torch.Tensor, fraction: float) -> float:
-    # https://github.com/pytorch/pytorch/blob/master/aten/src/ATen/native/Sorting.cpp#L221
+    """calculate approximate quantiles of input tensor.
+
+    The reason we use this instead of :func:`torch.quantile` is that `torch.quantile` has
+    size limit as indicated in https://github.com/pytorch/pytorch/blob/master/aten/src/ATen/native/Sorting.cpp#L221
+
+    Args:
+        t (torch.Tensor): input tensor
+        fraction (float): quantile percentage, ranges [0, 1]
+
+    Returns:
+        float: quantile value
+    """
     size = t.numel()
     bound = 2 ** 24
     if size <= bound:
@@ -42,6 +53,12 @@ def approx_quantile(t: torch.Tensor, fraction: float) -> float:
 
 
 class LinearQuantization(torch.autograd.Function):
+    """Straight-Through Gradient Estimator.
+
+    Please look for detailed description on arguments in
+    :func:`linear_quantize_callback`.
+    """
+
     @staticmethod
     def forward(
         ctx,
@@ -67,9 +84,6 @@ class LinearQuantization(torch.autograd.Function):
 
     @staticmethod
     def backward(ctx, grad_output):
-        """
-        Straight Through Gradient Estimator
-        """
         limit, tof = ctx.saved_tensors
         v = grad_output.clamp_(-limit * tof, (limit - 1) * tof)
         return (v, None, None, None, None)
@@ -81,6 +95,17 @@ def linear_quantize_callback(
     decimal: TensorOrInt = 5,
     channel_index: int = 1,
 ) -> torch.Tensor:
+    """quantization function with type signature of :class:`QuantizeCallback`
+
+    Args:
+        inp (torch.Tensor): input tensor
+        bits (int, optional): bitwidth. Defaults to 8.
+        decimal (TensorOrInt, optional): decimal bits, will be tensor of decimal bits for vector quantization. Defaults to 5.
+        channel_index (int, optional): dimension index for channel. Defaults to 1.
+
+    Returns:
+        torch.Tensor: quantized tensor
+    """
     return LinearQuantization.apply(inp, bits, decimal, channel_index)
 
 
@@ -89,9 +114,17 @@ def arg_decimal_min_mse(
     bits: int,
     decimal_range: Tuple[int, int] = (0, 20),
     saturate_range: Tuple[float, float] = (0, 1),
-):
-    """
-    calculate the best decimal point for quantizing tensor
+) -> int:
+    """calculate the best decimal bits for given tensor.
+
+    Args:
+        tensor (torch.Tensor): input tensor
+        bits (int): bitwidth
+        decimal_range (Tuple[int, int], optional): search range of decimal bits. Defaults to (0, 20).
+        saturate_range (Tuple[float, float], optional): quantiles used to clamp the input tensor before searching decimal bits. Defaults to (0, 1).
+
+    Returns:
+        int: decimal bits
     """
     err = float("inf")
     best_n = None
@@ -132,6 +165,10 @@ class QuantizeLayer(nn.Module):
         collapse: int = 0,
         name: str = "",
     ):
+        """Applies quantization over input tensor.
+
+        Please look for detailed description in :func:`quantize`
+        """
         super().__init__()
         print(
             f"[Quantize @ {name}] bits={bits} channelwise={channelwise} window_size={window_size} timeout={timeout}"
@@ -263,13 +300,11 @@ class QuantizeLayer(nn.Module):
 
 
 def quantize(
-    arg: OptionalTensorOrModule = None,
+    inp: nn.Module = None,
     bits: int = 8,
     channelwise: int = 1,
     decimal_range: Tuple[int, int] = (0, 20),
     saturate_range: Tuple[float, float] = (0, 1),
-    # for tensor computation
-    decimal: Optional[TensorOrInt] = None,
     # for step-wise training
     timeout: int = 1000,
     interval: int = -1,
@@ -280,7 +315,28 @@ def quantize(
     bias_bits: int = -1,
     # for debug purpose
     name: str = "",
-) -> OptionalTensorOrModule:
+) -> nn.Module:
+    """Creates a :class:`QuantizeLayer` which is usually used for feature
+    quantization if no input module is provided, or creates a weight-quantized
+    version of the input module.
+
+    Args:
+        inp (nn.Module, optional): input module whose weight is to be quantized. Defaults to None.
+        bits (int, optional): bitwidth for weight. Defaults to 8.
+        channelwise (int, optional): dimension index for channel. Defaults to 1, means using vector quantization. When set to -1, vector quantization is disabled.
+        decimal_range (Tuple[int, int], optional): search range of decimal bits. Defaults to (0, 20).
+        saturate_range (Tuple[float, float], optional): quantiles used to clamp tensors before searching decimal bits. Defaults to (0, 1).
+        timeout (int, optional): the steps to compute the best decimal bits. Defaults to 1000.
+        interval (int, optional): interval of steps before each time to compute the best decimal bits. Defaults to -1, means only calculating the decimal bits once.
+        window_size (int, optional): number of tensors used for computing the decimal bits. Defaults to 1.
+        callback (QuantizeCallback, optional):  callback for actual operation of quantizing tensor, used for customization. Defaults to :func:`linear_quantize_callback`.
+        bias_bits (int, optional): bitwidth for bias. Defaults to -1, means not quantizing bias.
+        name (str, optional): name of the quantize layer created, used for better logging. Defaults to "".
+
+    Returns:
+        nn.Module: input module with its weight quantized or a instance of :class:`QuantizeLayer` for feature quantization
+    """
+
     def get_quantize_layer(feature_collapse=0, is_bias=False):
         if bias_bits == -1 and is_bias:
             return lambda a: a
@@ -298,22 +354,17 @@ def quantize(
                 collapse=feature_collapse,
             )
 
-    if arg is None:
+    if inp is None:
         return get_quantize_layer()
-    elif isinstance(arg, torch.Tensor):
-        assert (
-            decimal is not None
-        ), "decimal points for the input tensor must be provided"
-        return linear_quantize_callback(arg, bits, decimal, channelwise)
-    elif isinstance(arg, nn.Module):
+    elif isinstance(inp, nn.Module):
         return imitate(
-            arg,
+            inp,
             "quantize",
             get_quantize_layer(-1),
             get_quantize_layer(-1, is_bias=True),
         )
     else:
-        raise ValueError(f"{arg} is not a valid argument for quantize")
+        raise ValueError(f"{inp} is not a valid argument for quantize")
 
 
 if __name__ == "__main__":
