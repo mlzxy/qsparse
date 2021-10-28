@@ -18,13 +18,13 @@ repos:
       language: system
       pass_filenames: false
 
-
 -   repo: https://github.com/ambv/black
     rev: 20.8b1
     hooks:
     - id: black
       args: [--check]
       language_version: python3
+
 -   repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v2.3.0
     hooks:
@@ -36,11 +36,19 @@ repos:
     - id: check-merge-conflict
     - id: debug-statements
     - id: end-of-file-fixer
+
 -   repo: https://github.com/asottile/blacken-docs
     rev: v1.8.0
     hooks:
     - id: blacken-docs
+
 -   repo: https://github.com/python/black
     rev: 20.8b1
     hooks:
     - id: black
+
+- repo: https://github.com/myint/docformatter
+  rev: v1.3.1
+  hooks:
+    - id: docformatter
+      args: [--in-place]

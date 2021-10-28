@@ -5,10 +5,11 @@ import torch.nn as nn
 
 
 def auto_name_prune_quantize_layers(net: nn.Module):
-    """Set name attribute of prune/quantize layers based on their torch module
-    paths. This utility can be applied for better logging and debugging purpose.
+    """Set name attribute of Prune/Quantize layers based on their torch module
+    paths. This utility can be applied for better logging and debugging
+    purpose.
 
-    Args: net (nn.Module): network module with prune or quantize layers
+    Args: net (nn.Module): network module with Prune or Quantize layers
     """
     from qsparse.quantize import QuantizeLayer
     from qsparse.sparse import PruneLayer
@@ -19,7 +20,7 @@ def auto_name_prune_quantize_layers(net: nn.Module):
 
 
 def nd_slice(d: int, dim: int = 0, start: int = 0, end: int = 1) -> List[slice]:
-    """Create a multi-dimensional slice
+    """Create a multi-dimensional slice.
 
     Args:
         d (int): number of dimensions
@@ -28,7 +29,7 @@ def nd_slice(d: int, dim: int = 0, start: int = 0, end: int = 1) -> List[slice]:
         end (int, optional): end index in the target dimension. Defaults to 1.
 
     Returns:
-        List[slice]: [description]
+        List[slice]: multi-dimensional slice
     """
     indexes = [slice(None)] * d
     indexes[dim] = slice(start, end)

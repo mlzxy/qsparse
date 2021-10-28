@@ -9,7 +9,8 @@ OptionalTensorOrModule = Optional[Union[torch.Tensor, nn.Module]]
 TensorOrInt = Union[int, torch.Tensor]
 
 
-def ensure_tensor(v):
+def ensure_tensor(v) -> torch.Tensor:
+    """convert the input to torch.Tensor if necessary."""
     if isinstance(v, torch.Tensor):
         return v
     else:
@@ -17,6 +18,8 @@ def ensure_tensor(v):
 
 
 class QuantizeCallback(Protocol):
+    """Type signature of the callback used in QuantizeLayer."""
+
     def __call__(
         self,
         inp: torch.Tensor,
@@ -24,9 +27,32 @@ class QuantizeCallback(Protocol):
         decimal: TensorOrInt = 5,
         channel_index: int = 1,
     ) -> torch.Tensor:
-        pass
+        """quantize an input tensor based on provided bitwidth and decimal
+        bits.
+
+        Args:
+            inp (torch.Tensor): input tensor
+            bits (int, optional): bitwidth. Defaults to 8.
+            decimal (TensorOrInt, optional): decimal bits. Defaults to 5.
+            channel_index (int, optional): the index of the channel dimension, used to implement vector quantization. Defaults to 1.
+
+        Returns:
+            torch.Tensor: Quantized tensor. It still has the same data type as the input tensor, but can be
+                          identically represented using integer format with provided bitwidth.
+        """
 
 
 class PruneCallback(Protocol):
+    """Type signature of the callback used in PruneLayer."""
+
     def __call__(self, inp: List[torch.Tensor], sparsity: float) -> torch.Tensor:
-        pass
+        """calculate the binary mask used for pruning with the input tensor and
+        target sparsity.
+
+        Args:
+            inp (torch.Tensor): input tensor
+            sparsity (float): target sparsity (ratio of zeros)
+
+        Returns:
+            torch.Tensor: binary mask
+        """
