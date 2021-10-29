@@ -337,7 +337,7 @@ def quantize(
     Args:
         inp (nn.Module, optional): input module whose weight is to be quantized. Defaults to None.
         bits (int, optional): bitwidth for weight. Defaults to 8.
-        channelwise (int, optional): dimension index for channel. Defaults to 1, means using vector quantization. When set to -1, vector quantization is disabled.
+        channelwise (int, optional): dimension index for channel. Defaults to 1. When channelwise >= 0, vector quantization is enabled. When set to -1, vector quantization is disabled.
         decimal_range (Tuple[int, int], optional): search range of decimal bits. Defaults to (0, 20).
         saturate_range (Tuple[float, float], optional): quantiles used to clamp tensors before searching decimal bits. Defaults to (0, 1).
         timeout (int, optional): the steps to compute the best decimal bits. Defaults to 1000.

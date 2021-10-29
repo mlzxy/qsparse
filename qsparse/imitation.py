@@ -55,6 +55,8 @@ def imitate(
 
     if bias_thing is not None:
         setattr(human, name + "_bias", bias_thing)
+    else:
+        setattr(human, name + "_bias", lambda x: x)
 
     class Imitation(InputClass):
         @property
