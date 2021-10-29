@@ -15,3 +15,4 @@ pytest-cov
 torch
 torchvision
 typing_extensions
+coverage-badge
