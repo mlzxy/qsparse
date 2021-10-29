@@ -25,7 +25,9 @@ test:
 doc:
 	mkdocs build
 
-install:
+dependency:
 	python3 -m pip install -r requirements.txt -r requirements.dev.txt --user
+
+install: dependency
 	python3 -m pip install -e . --user
 	pre-commit install
