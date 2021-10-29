@@ -9,7 +9,7 @@ def test_feature():
     data = (torch.rand((1, 10, 32, 32)) - 0.5) * 4
     timeout = 5
     quantize_layer = quantize(bits=8, timeout=timeout, channelwise=-1)
-    for _ in range(timeout + 1):  # ensure the quantization has been enabled
+    for _ in range(timeout + 1):  # ensure the quantization has been triggered
         output = quantize_layer(data).numpy()
 
     output_ref = linear_quantize_callback(
@@ -21,7 +21,7 @@ def test_feature():
     saturate_quantize_layer = quantize(
         bits=8, timeout=timeout, saturate_range=(0.3, 0.7), channelwise=-1
     )
-    for _ in range(timeout + 1):  # ensure the quantization has been enabled
+    for _ in range(timeout + 1):  # ensure the quantization has been triggered
         saturate_quantize_layer(data)
     assert saturate_quantize_layer.decimal.item() == 7
 
@@ -105,7 +105,7 @@ def test_interger_arithmetic():
         torch.nn.Conv2d(10, 30, 3, bias=False), bits=8, timeout=timeout, channelwise=0
     )  # vector quantization on output channel
     qconv.train()
-    for _ in range(timeout + 1):  # ensure the quantization has been enabled
+    for _ in range(timeout + 1):  # ensure the quantization has been triggered
         qconv(input_float)
     output_float = linear_quantize_callback(qconv(input_float), 8, no)
 
