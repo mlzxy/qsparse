@@ -148,3 +148,4 @@ s3:
 examples/data
 *.pt
 data
+tmp
