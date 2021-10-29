@@ -24,6 +24,7 @@ test:
 
 doc:
 	mkdocs build
+	perl -i -pe's/docs\/assets/assets/g'  site/index.html
 
 dependency:
 	python3 -m pip install -r requirements.txt -r requirements.dev.txt --user
