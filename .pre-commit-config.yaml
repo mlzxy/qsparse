@@ -17,6 +17,11 @@ repos:
       entry: make doc
       language: system
       pass_filenames: false
+    - id: unit-test
+      name: Ensure unit tests all pass
+      entry: make test
+      language: system
+      pass_filenames: false
 
 -   repo: https://github.com/ambv/black
     rev: 20.8b1

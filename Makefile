@@ -11,7 +11,7 @@ wheel:
 	python3 setup.py sdist bdist_wheel
 
 test:
-	pytest tests/*.py \
+	pytest tests/ \
 		--cov=qsparse\
 		--no-cov-on-fail \
 		--cov-report=html:htmlcov \
