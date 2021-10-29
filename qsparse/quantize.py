@@ -113,6 +113,7 @@ def arg_decimal_min_mse(
     bits: int,
     decimal_range: Tuple[int, int] = (0, 20),
     saturate_range: Tuple[float, float] = (0, 1),
+    callback: QuantizeCallback = linear_quantize_callback,
 ) -> int:
     """calculate the best decimal bits for given tensor.
 
@@ -121,6 +122,7 @@ def arg_decimal_min_mse(
         bits (int): bitwidth
         decimal_range (Tuple[int, int], optional): search range of decimal bits. Defaults to (0, 20).
         saturate_range (Tuple[float, float], optional): quantiles used to clamp the input tensor before searching decimal bits. Defaults to (0, 1).
+        callback (QuantizeCallback, optional): callback for actual operation of quantizing tensor. Defaults to [linear\_quantize\_callback][qsparse.quantize.linear_quantize_callback].
 
     Returns:
         int: decimal bits
@@ -139,7 +141,7 @@ def arg_decimal_min_mse(
             approx_quantile(tensor, saturate_range[1]),
         )
     for n in range(*decimal_range):
-        tensor_q = quantize(tensor, bits, decimal=n)
+        tensor_q = callback(tensor, bits, decimal=n)
         err_ = torch.sum((tensor - tensor_q) ** 2).item()
         if err_ < err:
             best_n = n
@@ -278,6 +280,7 @@ class QuantizeLayer(nn.Module):
                             self.bits,
                             self.decimal_range,
                             self.saturate_range,
+                            self.callback,
                         )
                         self.decimal.data[i] = n
                     print(
@@ -289,6 +292,7 @@ class QuantizeLayer(nn.Module):
                         self.bits,
                         self.decimal_range,
                         self.saturate_range,
+                        self.callback,
                     )
                     print(f"{self.name} decimal = {n}")
                     self.decimal.data[:] = n

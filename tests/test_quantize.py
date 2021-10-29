@@ -1,7 +1,7 @@
 import numpy as np
 import torch
 
-from qsparse import linear_quantize_callback
+from qsparse import linear_quantize_callback, quantize
 
 
 def test_feature():
@@ -9,7 +9,44 @@ def test_feature():
 
 
 def test_weight():
-    pass
+    timeout = 5
+    data = torch.rand((1, 10, 32, 32))
+
+    qconv = quantize(torch.nn.Conv2d(10, 30, 3), bits=8, bias_bits=8, timeout=timeout)
+    qconv.train()
+    for _ in range(timeout * 2):
+        qconv(data)
+
+    assert (
+        qconv.weight.detach().numpy()
+        - linear_quantize_callback(qconv.weight, 8, qconv.quantize.decimal)
+        .detach()
+        .numpy()
+    ).sum() == 0, "weight shall be fully quantized"
+    assert (
+        qconv.bias.detach().numpy()
+        - linear_quantize_callback(
+            qconv.bias, 8, qconv.quantize_bias.decimal, channel_index=0
+        )
+        .detach()
+        .numpy()
+    ).sum() == 0, "bias shall be fully quantized"
+
+    assert (
+        dict(qconv.named_parameters())["weight"].detach().numpy()
+        - qconv.weight.detach().numpy()
+    ).sum() != 0, "parameter['weight'] stores the untouched weight with full precision"
+
+    qconv = quantize(torch.nn.Conv2d(10, 30, 3), bits=8, timeout=timeout)
+    qconv.eval()
+    for _ in range(timeout * 2):
+        qconv(data)
+    assert (
+        qconv.weight.detach().numpy()
+        - linear_quantize_callback(qconv.weight, 8, qconv.quantize.decimal)
+        .detach()
+        .numpy()
+    ).sum() != 0, "quantization schedule shall only be triggered during training"
 
 
 def test_callback():
@@ -34,3 +71,7 @@ def test_callback():
                 qdata[indices].numpy(),
                 atol=1 / 2 ** decimals[j].item(),
             )
+
+
+def test_interger_computation():
+    pass
