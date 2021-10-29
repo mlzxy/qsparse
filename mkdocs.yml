@@ -4,8 +4,9 @@ repo_url: "https://github.com/mlzxy/qsparse"
 repo_name: Github
 nav:
     - Home: "README.md"
-    - Examples: "examples.md"
     - Tutorial: "tutorial.md"
+    - Advanced Usage: "advanced_usage.md"
+    - Examples: "examples.md"
     - Reference:
       - sparse: "reference/sparse.md"
       - quantize: "reference/quantize.md"
