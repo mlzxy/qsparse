@@ -20,7 +20,7 @@ def unstructured_prune_callback(
     [PruneCallback][qsparse.common.PruneCallback]
 
     Args:
-        inp (List[torch.Tensor]): input tensor
+        inp (List[torch.Tensor]): input tensor list (see more in [PruneCallback][qsparse.common.PruneCallback])
         sparsity (float): target sparsity
 
     Returns:
@@ -37,16 +37,16 @@ def unstructured_prune_callback(
 
 
 def structured_prune_callback(
-    inp: List[torch.Tensor], sparsity: float, prunable: Union[Iterable[int], int] = {1}
+    inp: List[torch.Tensor], sparsity: float, prunable: Union[Iterable[int], int] = {0}
 ) -> torch.Tensor:
     """structured pruning function with type signature of.
 
     [PruneCallback][qsparse.common.PruneCallback]
 
     Args:
-        inp (List[torch.Tensor]): input tensor
+        inp (List[torch.Tensor]): input tensor list (see more in [PruneCallback][qsparse.common.PruneCallback])
         sparsity (float): target sparsity
-        prunable (Union[Iterable[int], int], optional): dimension indexes that are prunable. Defaults to {1}, which corresponds to channel dimension.
+        prunable (Union[Iterable[int], int], optional): dimension indexes that are prunable. Defaults to {0}, which corresponds to channel dimension when batch dimension is not present.
 
     Returns:
         torch.Tensor: binary mask
@@ -58,8 +58,8 @@ def structured_prune_callback(
         for _i in range(len(saliency.shape)):
             if _i not in prunables:
                 saliency = saliency.abs().mean(dim=_i, keepdim=True)
-        saliency_lst.append(saliency)
-    saliency = torch.cat(saliency_lst, dim=0).abs().mean(dim=0, keepdim=True)
+        saliency_lst.append(saliency.view(1, *saliency.shape))
+    saliency = torch.cat(saliency_lst, dim=0).abs().mean(dim=0)
     values = saliency.flatten().sort()[0]
     n = len(values)
     idx = max(int(sparsity * n - 1), 0)
@@ -140,11 +140,7 @@ class PruneLayer(nn.Module):
             assert len(x.shape) > 1
             with torch.no_grad():
                 m_example = self.callback(
-                    [
-                        x.detach()
-                        if self._collapse < 0
-                        else x.mean(self._collapse, keepdim=True)
-                    ],
+                    [x.detach() if self._collapse < 0 else x.mean(self._collapse)],
                     0,
                 )
             self.mask = nn.Parameter(
@@ -174,7 +170,7 @@ class PruneLayer(nn.Module):
                     .detach()
                     .split(1)
                 ):  # type: torch.Tensor
-                    self.window.append(t.to("cpu"))
+                    self.window.append(t.squeeze(0).to("cpu"))
             else:
                 self.window.append(x.abs().detach().to("cpu"))
 

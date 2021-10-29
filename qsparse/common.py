@@ -49,7 +49,7 @@ class PruneCallback(Protocol):
         target sparsity.
 
         Args:
-            inp (torch.Tensor): input tensor
+            inp (List[torch.Tensor]): input tensor list. Tensors in this list shall have the same shape and no batch dimension. For example, for CIFAR10 images, the shapes of the input tensors are `[(3, 32, 32), (3, 32, 32), ...]`
             sparsity (float): target sparsity (ratio of zeros)
 
         Returns:
