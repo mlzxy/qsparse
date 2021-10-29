@@ -31,4 +31,4 @@ def test_approx_quantile():
     approximate = approx_quantile(
         data, 0.5, bound=500
     )  # use a small bound to trigger approximate quantile computation
-    assert np.isclose(accurate, approximate, rtol=0.01)
+    assert np.isclose(accurate, approximate, rtol=0.05)
