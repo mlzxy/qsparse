@@ -1,6 +1,8 @@
+import numpy as np
 import torch
 
 from qsparse import auto_name_prune_quantize_layers, prune, quantize
+from qsparse.quantize import approx_quantile
 
 
 def test_auto_name_prune_quantize_layers():
@@ -21,3 +23,12 @@ def test_auto_name_prune_quantize_layers():
     assert net.linear1.quantize.name == "linear1.quantize"
     assert net.linear2.prune.name == "linear2.prune"
     assert net.linear2.quantize.name == "linear2.quantize"
+
+
+def test_approx_quantile():
+    data = torch.rand((1000,))
+    accurate = torch.quantile(data, 0.5)
+    approximate = approx_quantile(
+        data, 0.5, bound=500
+    )  # use a small bound to trigger approximate quantile computation
+    assert np.isclose(accurate, approximate, rtol=0.01)
