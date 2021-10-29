@@ -6,12 +6,7 @@ from typing import Tuple
 import torch
 import torch.nn as nn
 
-from qsparse.common import (
-    OptionalTensorOrModule,
-    QuantizeCallback,
-    TensorOrInt,
-    ensure_tensor,
-)
+from qsparse.common import QuantizeCallback, TensorOrInt, ensure_tensor
 from qsparse.imitation import imitate
 from qsparse.util import nd_slice
 
@@ -23,7 +18,7 @@ __all__ = [
 def approx_quantile(t: torch.Tensor, fraction: float) -> float:
     """calculate approximate quantiles of input tensor.
 
-    The reason we use this instead of :func:`torch.quantile` is that `torch.quantile` has
+    The reason we use this instead of `torch.quantile` is that `torch.quantile` has
     size limit as indicated in https://github.com/pytorch/pytorch/blob/master/aten/src/ATen/native/Sorting.cpp#L221
 
     Args:
@@ -56,7 +51,7 @@ class LinearQuantization(torch.autograd.Function):
     """Straight-Through Gradient Estimator.
 
     Please look for detailed description on arguments in
-    :func:`linear_quantize_callback`.
+    [linear\_quantize\_callback][qsparse.quantize.linear_quantize_callback].
     """
 
     @staticmethod
@@ -67,6 +62,7 @@ class LinearQuantization(torch.autograd.Function):
         decimal: TensorOrInt = 5,
         channel_index: int = 1,
     ):
+        """quantize the input tensor and prepare for backward computation."""
         limit = 2.0 ** (bits - 1)
         tof = 2.0 ** -decimal
         toi = 2.0 ** decimal
@@ -84,6 +80,7 @@ class LinearQuantization(torch.autograd.Function):
 
     @staticmethod
     def backward(ctx, grad_output):
+        """gradient computation for quantization operation."""
         limit, tof = ctx.saved_tensors
         v = grad_output.clamp_(-limit * tof, (limit - 1) * tof)
         return (v, None, None, None, None)
@@ -95,7 +92,9 @@ def linear_quantize_callback(
     decimal: TensorOrInt = 5,
     channel_index: int = 1,
 ) -> torch.Tensor:
-    """quantization function with type signature of :class:`QuantizeCallback`
+    """quantization function with type signature of.
+
+    [QuantizeCallback][qsparse.common.QuantizeCallback]
 
     Args:
         inp (torch.Tensor): input tensor
@@ -149,6 +148,12 @@ def arg_decimal_min_mse(
 
 
 class QuantizeLayer(nn.Module):
+    """Applies quantization over input tensor.
+
+    Please look for detailed description in
+    [quantize][qsparse.quantize.quantize]
+    """
+
     def __init__(
         self,
         bits: int = 8,
@@ -165,10 +170,6 @@ class QuantizeLayer(nn.Module):
         collapse: int = 0,
         name: str = "",
     ):
-        """Applies quantization over input tensor.
-
-        Please look for detailed description in :func:`quantize`
-        """
         super().__init__()
         print(
             f"[Quantize @ {name}] bits={bits} channelwise={channelwise} window_size={window_size} timeout={timeout}"
@@ -195,9 +196,18 @@ class QuantizeLayer(nn.Module):
 
     @property
     def initted(self) -> bool:
+        """whether the parameters of the quantize layer are initialized."""
         return self._n_updates.item() != -1
 
     def forward(self, x):
+        """Quantize input tensor according to given configuration.
+
+        Args:
+            x (torch.Tensor): tensor to be quantized
+
+        Returns:
+            torch.Tensor: quantized tensor
+        """
         if not self.initted:
             self.decimal = nn.Parameter(
                 torch.ones(1 if self.channelwise < 0 else x.shape[self.channelwise]).to(
@@ -316,9 +326,9 @@ def quantize(
     # for debug purpose
     name: str = "",
 ) -> nn.Module:
-    """Creates a :class:`QuantizeLayer` which is usually used for feature
-    quantization if no input module is provided, or creates a weight-quantized
-    version of the input module.
+    """Creates a [QuantizeLayer][qsparse.quantize.QuantizeLayer] which is
+    usually used for feature quantization if no input module is provided, or
+    creates a weight-quantized version of the input module.
 
     Args:
         inp (nn.Module, optional): input module whose weight is to be quantized. Defaults to None.
@@ -329,12 +339,12 @@ def quantize(
         timeout (int, optional): the steps to compute the best decimal bits. Defaults to 1000.
         interval (int, optional): interval of steps before each time to compute the best decimal bits. Defaults to -1, means only calculating the decimal bits once.
         window_size (int, optional): number of tensors used for computing the decimal bits. Defaults to 1.
-        callback (QuantizeCallback, optional):  callback for actual operation of quantizing tensor, used for customization. Defaults to :func:`linear_quantize_callback`.
+        callback (QuantizeCallback, optional):  callback for actual operation of quantizing tensor, used for customization. Defaults to [linear\_quantize\_callback][qsparse.quantize.linear_quantize_callback].
         bias_bits (int, optional): bitwidth for bias. Defaults to -1, means not quantizing bias.
         name (str, optional): name of the quantize layer created, used for better logging. Defaults to "".
 
     Returns:
-        nn.Module: input module with its weight quantized or a instance of :class:`QuantizeLayer` for feature quantization
+        nn.Module: input module with its weight quantized or a instance of [QuantizeLayer][qsparse.quantize.QuantizeLayer] for feature quantization
     """
 
     def get_quantize_layer(feature_collapse=0, is_bias=False):

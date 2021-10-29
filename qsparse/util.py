@@ -4,19 +4,24 @@ import torch
 import torch.nn as nn
 
 
-def auto_name_prune_quantize_layers(net: nn.Module):
+def auto_name_prune_quantize_layers(net: nn.Module) -> nn.Module:
     """Set name attribute of Prune/Quantize layers based on their torch module
-    paths. This utility can be applied for better logging and debugging
-    purpose.
+    paths. This utility can be applied for better logging.
 
-    Args: net (nn.Module): network module with Prune or Quantize layers
+    Args:
+        net (nn.Module): network module with [PruneLayer][qsparse.sparse.PruneLayer] and [QuantizeLayer][qsparse.quantize.QuantizeLayer].
+
+    Returns:
+        nn.Module: modified module
     """
+
     from qsparse.quantize import QuantizeLayer
     from qsparse.sparse import PruneLayer
 
     for name, mod in net.named_modules():
         if isinstance(mod, (PruneLayer, QuantizeLayer)):
             mod.name = name
+    return net
 
 
 def nd_slice(d: int, dim: int = 0, start: int = 0, end: int = 1) -> List[slice]:

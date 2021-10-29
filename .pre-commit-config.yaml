@@ -29,10 +29,9 @@ repos:
     rev: v2.3.0
     hooks:
     - id: flake8
-      args: ["--ignore=E501,E203,F401,W503,W504,E741,F403,F405,F841"]
+      args: ["--ignore=E501,E203,F401,W503,W504,E741,F403,F405,F841,W605"]
     - id: trailing-whitespace
     - id: check-added-large-files
-    - id: check-docstring-first
     - id: check-merge-conflict
     - id: debug-statements
     - id: end-of-file-fixer

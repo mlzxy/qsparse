@@ -5,7 +5,7 @@ from typing import Iterable, List, Union
 import torch
 import torch.nn as nn
 
-from qsparse.common import OptionalTensorOrModule, PruneCallback
+from qsparse.common import PruneCallback
 from qsparse.imitation import imitate
 from qsparse.util import nd_slice
 
@@ -15,8 +15,9 @@ __all__ = ["prune", "unstructured_prune_callback", "structured_prune_callback"]
 def unstructured_prune_callback(
     inp: List[torch.Tensor], sparsity: float
 ) -> torch.Tensor:
-    """unstructured pruning function with type signature of
-    :class:`PruneCallback`
+    """unstructured pruning function with type signature of.
+
+    [PruneCallback][qsparse.common.PruneCallback]
 
     Args:
         inp (List[torch.Tensor]): input tensor
@@ -38,8 +39,9 @@ def unstructured_prune_callback(
 def structured_prune_callback(
     inp: List[torch.Tensor], sparsity: float, prunable: Union[Iterable[int], int] = {1}
 ) -> torch.Tensor:
-    """structured pruning function with type signature of
-    :class:`PruneCallback`
+    """structured pruning function with type signature of.
+
+    [PruneCallback][qsparse.common.PruneCallback]
 
     Args:
         inp (List[torch.Tensor]): input tensor
@@ -67,6 +69,12 @@ def structured_prune_callback(
 
 
 class PruneLayer(nn.Module):
+    """Applies pruning over input tensor.
+
+    Please look for detailed description in
+    [prune][qsparse.sparse.prune]
+    """
+
     def __init__(
         self,
         sparsity: float = 0.5,
@@ -82,10 +90,6 @@ class PruneLayer(nn.Module):
         # for debug purpose
         name="",
     ):
-        """Applies pruning over input tensor.
-
-        Please look for detailed description in :func:`prune`
-        """
         super().__init__()
         print(
             f"[Prune @ {name} Args] start = {start} interval = {interval} repetition = {repetition} sparsity = {sparsity} window_size = {window_size} collapse = {collapse} "
@@ -117,9 +121,21 @@ class PruneLayer(nn.Module):
 
     @property
     def initted(self) -> bool:
+        """whether the parameters of the prune layer are initialized."""
         return self._n_updates.item() != -1
 
-    def forward(self, x: torch.Tensor):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Prunes input tensor according to given sparsification schedule.
+
+        Args:
+            x (torch.Tensor): tensor to be pruned
+
+        Raises:
+            RuntimeError: when the shape of input tensors mismatch with the shape of binary mask
+
+        Returns:
+            torch.Tensor: pruned tensor
+        """
         if not self.initted:
             assert len(x.shape) > 1
             with torch.no_grad():
@@ -239,9 +255,9 @@ def prune(
     # for debug purpose
     name="",
 ) -> nn.Module:
-    """Creates a :class:`PruneLayer` which is usually used for feature pruning
-    if no input module is provided, or creates a weight-pruned version of the
-    input module.
+    """Creates a [PruneLayer][qsparse.sparse.PruneLayer] which is usually used
+    for feature pruning if no input module is provided, or creates a weight-
+    pruned version of the input module.
 
     Args:
         inp (nn.Module, optional): input module whose weight is to be pruned. Defaults to None.
@@ -252,11 +268,11 @@ def prune(
         window_size (int, optional): number of input tensors used for computing the binary mask. Defaults to 1, means using only current input.
         strict (bool, optional): whether enforcing the shape of the binary mask to be equal to the input tensor. Defaults to True.
                                  When strict=False, it will try to expand the binary mask to matched the input tensor shape during evaluation, useful for tasks whose test images are larger, like super resolution.
-        callback (PruneCallback, optional): callback for actual operation of pruning tensor, used for customization. Defaults to :func:`unstructured_prune_callback`.
+        callback (PruneCallback, optional): callback for actual operation of pruning tensor, used for customization. Defaults to [unstructured\_prune\_callback][qsparse.sparse.unstructured_prune_callback].
         name (str, optional): name of the prune layer created, used for better logging. Defaults to "".
 
     Returns:
-        nn.Module: input module with its weight pruned or a instance of :class:`PruneLayer` for feature pruning
+        nn.Module: input module with its weight pruned or a instance of [PruneLayer][qsparse.sparse.PruneLayer] for feature pruning
     """
 
     def get_prune_layer(feature_collapse=0):
