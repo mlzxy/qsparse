@@ -15,7 +15,7 @@ __all__ = [
 ]
 
 
-def approx_quantile(t: torch.Tensor, fraction: float) -> float:
+def approx_quantile(t: torch.Tensor, fraction: float, bound: int = 2 ** 24) -> float:
     """calculate approximate quantiles of input tensor.
 
     The reason we use this instead of `torch.quantile` is that `torch.quantile` has
@@ -24,12 +24,12 @@ def approx_quantile(t: torch.Tensor, fraction: float) -> float:
     Args:
         t (torch.Tensor): input tensor
         fraction (float): quantile percentage, ranges [0, 1]
+        bound (int, optional): size threshold of input tensor to trigger approximate computation
 
     Returns:
         float: quantile value
     """
     size = t.numel()
-    bound = 2 ** 24
     if size <= bound:
         return torch.quantile(t, fraction)
     else:
@@ -236,7 +236,6 @@ class QuantizeLayer(nn.Module):
             if self._collapse >= 0:
                 for t in (
                     x[nd_slice(len(x.shape), self._collapse, end=self.window_size)]
-                    .abs()
                     .detach()
                     .split(1)
                 ):  # type: torch.Tensor

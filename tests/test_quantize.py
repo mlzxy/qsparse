@@ -6,8 +6,24 @@ from qsparse import linear_quantize_callback, quantize
 
 
 def test_feature():
-    # add saturation
-    pass
+    data = (torch.rand((1, 10, 32, 32)) - 0.5) * 4
+    timeout = 5
+    quantize_layer = quantize(bits=8, timeout=timeout, channelwise=-1)
+    for _ in range(timeout + 1):  # ensure the quantization has been enabled
+        output = quantize_layer(data).numpy()
+
+    output_ref = linear_quantize_callback(
+        data, bits=8, decimal=quantize_layer.decimal
+    ).numpy()
+    assert quantize_layer.decimal.item() == 6
+    assert np.all(output == output_ref)
+
+    saturate_quantize_layer = quantize(
+        bits=8, timeout=timeout, saturate_range=(0.3, 0.7), channelwise=-1
+    )
+    for _ in range(timeout + 1):  # ensure the quantization has been enabled
+        saturate_quantize_layer(data)
+    assert saturate_quantize_layer.decimal.item() == 7
 
 
 def test_weight():
@@ -89,7 +105,7 @@ def test_interger_arithmetic():
         torch.nn.Conv2d(10, 30, 3, bias=False), bits=8, timeout=timeout, channelwise=0
     )  # vector quantization on output channel
     qconv.train()
-    for _ in range(timeout + 1):  # ensure the weight is quantized
+    for _ in range(timeout + 1):  # ensure the quantization has been enabled
         qconv(input_float)
     output_float = linear_quantize_callback(qconv(input_float), 8, no)
 
