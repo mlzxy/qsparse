@@ -20,3 +20,5 @@ jobs:
         run: make dependency
       - name: Run tests with pytest
         run: make test
+      - name: Build Documentation
+        run: make doc

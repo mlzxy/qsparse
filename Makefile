@@ -33,3 +33,6 @@ dependency:
 install: dependency
 	python3 -m pip install -e . --user
 	pre-commit install
+
+publish:
+	python3 setup.py sdist
