@@ -1,12 +1,12 @@
 site_name: QSparse - Joint Quantization & Pruning in PyTorch
 site_url: "https://qsparse.readthedocs.io/en/latest/"
 repo_url: "https://github.com/mlzxy/qsparse"
+edit_uri: edit/main/docs/
 repo_name: Github
 nav:
     - Home: "README.md"
-    - Tutorial: "tutorial.md"
-    - Advanced Usage: "advanced_usage.md"
-    - Examples: "examples.md"
+    - Tutorial: "tutorial.ipynb"
+    - Advanced Usage: "advanced_usage.ipynb"
     - Reference:
       - sparse: "reference/sparse.md"
       - quantize: "reference/quantize.md"
@@ -16,9 +16,13 @@ nav:
 
 theme:
   name: "material"
+  custom_dir: docs/overrides
 
 plugins:
   - search
+  - mkdocs-jupyter:
+      execute: True
+      include_source: True
   - mkdocstrings:
       default_handler: python
       handlers:
