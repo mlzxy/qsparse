@@ -12,11 +12,11 @@ repos:
       language: system
       pass_filenames: false
       types: [python3]
-    # - id: doc-test
-    #   name: Ensure doc is buildable
-    #   entry: make doc
-    #   language: system
-    #   pass_filenames: false
+    - id: doc-test
+      name: Ensure doc is buildable
+      entry: make doc
+      language: system
+      pass_filenames: false
     - id: unit-test
       name: Ensure unit tests all pass
       entry: make test
