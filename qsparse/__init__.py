@@ -10,3 +10,5 @@ __all__ = (
     "structured_prune_callback",
     "auto_name_prune_quantize_layers",
 )
+
+__version__ = "1.0.0"

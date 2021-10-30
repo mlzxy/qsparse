@@ -3,10 +3,9 @@
 import os
 import re
 import socket
-import subprocess
 from setuptools import Extension, find_packages, setup
+from qsparse import __version__
 
-version = subprocess.getoutput("git rev-parse HEAD")
 
 with open("README.md", "rb") as f:
     long_descr = f.read().decode("utf-8")
@@ -27,13 +26,21 @@ setup(
     name="qsparse",
     packages=find_packages(),
     entry_points={"console_scripts": []},
-    version=version,
-    description="Joint Quantization & Pruning in PyTorch with Pluggable Primitive API",
+    version=__version__,
+    description="train neural networks with joint quantization and pruning on any pytorch modules",
     long_description=long_descr,
-    author="Xinyu Zhang",
+    author="Xinyu Zhang, Ian Colbert, Srinjoy Das, Ken Kreutz-Delgado",
     author_email="xiz368@eng.ucsd.edu",
     url="https://github.com/mlzxy/qsparse",
     install_requires=load_requirements(),
     python_requires=">=3.6",
+    keywords=[
+        "pytorch",
+        "quantization",
+        "pruning",
+        "model compression",
+        "neural network",
+        "machine learning",
+    ],
     include_package_data=True,
 )

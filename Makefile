@@ -28,6 +28,7 @@ doc:
 
 dependency:
 	python3 -m pip install -r requirements.txt -r requirements.dev.txt --user
+	python3 -m pip install twine --user
 
 install: dependency
 	python3 -m pip install -e . --user

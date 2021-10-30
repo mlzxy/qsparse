@@ -1,8 +1,20 @@
 # QSparse
 
-<img src="docs/assets/coverage.svg" />   [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+![](docs/assets/coverage.svg)   [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 
+
+<!-- also mention how to setup and dev -->
+
+
+# Development
+
+
+# Citing
+
+If you find this open source release useful, please reference in your paper:
+
+> Zhang, X., Colbert, I., Kreutz-Delgado, K., & Das, S. (2021). Training Deep Neural Networks with Joint Quantization and Pruning of Weights and Activations. _arXiv preprint arXiv:2110.08271._
 
 ```bibtex
 @article{zhang2021training,
