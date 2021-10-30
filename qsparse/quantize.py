@@ -170,7 +170,7 @@ class QuantizeLayer(nn.Module):
     ):
         super().__init__()
         print(
-            f"[Quantize @ {name}] bits={bits} channelwise={channelwise} window_size={window_size} timeout={timeout}"
+            f"[Quantize{name if name == '' else f' @ {name}'}] bits={bits} channelwise={channelwise} window_size={window_size} timeout={timeout}"
         )
         self.window = deque(maxlen=window_size)
         self.window_size = window_size
@@ -279,7 +279,7 @@ class QuantizeLayer(nn.Module):
                         )
                         self.decimal.data[i] = n
                     print(
-                        f"{self.name} (channelwise) avg decimal = {self.decimal.float().mean().item()}"
+                        f"[Quantize{self.name if self.name == '' else f' @ {self.name}'}] (channelwise) avg decimal = {self.decimal.float().mean().item()}"
                     )
                 else:
                     n = arg_decimal_min_mse(
@@ -289,7 +289,9 @@ class QuantizeLayer(nn.Module):
                         self.saturate_range,
                         self.callback,
                     )
-                    print(f"{self.name} decimal = {n}")
+                    print(
+                        f"[Quantize{self.name if self.name == '' else f' @ {self.name}'}] decimal = {n}"
+                    )
                     self.decimal.data[:] = n
 
                 self._quantized[0] = True

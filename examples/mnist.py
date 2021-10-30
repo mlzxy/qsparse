@@ -14,17 +14,6 @@ from qsparse.util import auto_name_prune_quantize_layers
 from enum import Enum
 
 
-class TrainMode(Enum):
-    Float = "float"
-    PruneWeight = "prune_weight"
-    PruneFeat = "prune_feat"
-    Quantize = "quantize"
-    PruneWeightQuantize = "prune_weight-quantize"
-    PruneFeatQuantize = "prune_feat-quantize"
-    QuantizePruneWeight = "quantize-prune_weight"
-    QuantizePruneFeat = "quantize-prune_feat"
-
-
 def identity(x):
     return x
 
@@ -230,11 +219,6 @@ def main():
         default=False,
         help="For Saving the current Model",
     )
-    parser.add_argument(
-        "--train-mode",
-        default="float",
-        choices=[k.value for k in TrainMode],
-    )
 
     args = parser.parse_args()
     use_cuda = not args.no_cuda and torch.cuda.is_available()
@@ -258,7 +242,7 @@ def main():
     train_loader = torch.utils.data.DataLoader(dataset1, **train_kwargs)
     test_loader = torch.utils.data.DataLoader(dataset2, **test_kwargs)
     print(f"training epoch size = {len(train_loader)}")
-    model = Net(train_mode=args.train_mode, epoch_size=len(train_loader)).to(device)
+    model = Net(epoch_size=len(train_loader)).to(device)
     auto_name_prune_quantize_layers(model)
     optimizer = optim.Adadelta(model.parameters(), lr=args.lr)
     scheduler = StepLR(optimizer, step_size=1, gamma=args.gamma)

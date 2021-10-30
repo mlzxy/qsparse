@@ -87,7 +87,7 @@ class PruneLayer(nn.Module):
     ):
         super().__init__()
         print(
-            f"[Prune @ {name} Args] start = {start} interval = {interval} repetition = {repetition} sparsity = {sparsity} window_size = {window_size} collapse = {collapse} "
+            f"[Prune{name if name == '' else f' @ {name}'}] start = {start} interval = {interval} repetition = {repetition} sparsity = {sparsity} window_size = {window_size} collapse = {collapse} "
         )
         self.schedules = [start + interval * (1 + i) for i in range(repetition)]
         self.window = deque(maxlen=window_size)
@@ -192,7 +192,7 @@ class PruneLayer(nn.Module):
 
                     active_ratio = self.mask.sum().item() / self.mask.size().numel()
                     print(
-                        f"[Prune @ {self.name} Step {self._n_updates.item()}] active {active_ratio:.02f}, pruned {1 - active_ratio:.02f}, window_size = {len(self.window)}"
+                        f"[Prune{self.name if self.name == '' else f' @ {self.name}'}] [Step {self._n_updates.item()}] active {active_ratio:.02f}, pruned {1 - active_ratio:.02f}, window_size = {len(self.window)}"
                     )
                     if len(self.window) < self.window_size:
                         warnings.warn(

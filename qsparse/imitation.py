@@ -67,5 +67,6 @@ def imitate(
         def bias(self):
             return getattr(self, name + "_bias")((get_prev_bias(self)))
 
+    Imitation.__name__ = InputClass.__name__
     human.__class__ = Imitation
     return human
