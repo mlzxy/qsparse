@@ -7,7 +7,7 @@ nav:
     - Home: "README.md"
     - Tutorial: "tutorial.ipynb"
     - Advanced Usage: "advanced_usage.ipynb"
-    - Reference:
+    - API Reference:
       - sparse: "reference/sparse.md"
       - quantize: "reference/quantize.md"
       - imitation: "reference/imitation.md"
