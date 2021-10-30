@@ -15,9 +15,7 @@ __all__ = ["prune", "unstructured_prune_callback", "structured_prune_callback"]
 def unstructured_prune_callback(
     inp: List[torch.Tensor], sparsity: float
 ) -> torch.Tensor:
-    """unstructured pruning function with type signature of.
-
-    [PruneCallback][qsparse.common.PruneCallback]
+    """unstructured pruning function with type signature of [PruneCallback][qsparse.common.PruneCallback].
 
     Args:
         inp (List[torch.Tensor]): input tensor list (see more in [PruneCallback][qsparse.common.PruneCallback])
@@ -39,9 +37,7 @@ def unstructured_prune_callback(
 def structured_prune_callback(
     inp: List[torch.Tensor], sparsity: float, prunable: Union[Iterable[int], int] = {0}
 ) -> torch.Tensor:
-    """structured pruning function with type signature of.
-
-    [PruneCallback][qsparse.common.PruneCallback]
+    """structured pruning function with type signature of [PruneCallback][qsparse.common.PruneCallback].
 
     Args:
         inp (List[torch.Tensor]): input tensor list (see more in [PruneCallback][qsparse.common.PruneCallback])
@@ -71,8 +67,7 @@ def structured_prune_callback(
 class PruneLayer(nn.Module):
     """Applies pruning over input tensor.
 
-    Please look for detailed description in
-    [prune][qsparse.sparse.prune]
+    Please look for detailed description in [prune][qsparse.sparse.prune]
     """
 
     def __init__(

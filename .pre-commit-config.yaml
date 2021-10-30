@@ -56,8 +56,8 @@ repos:
     hooks:
     - id: black
 
-- repo: https://github.com/myint/docformatter
-  rev: v1.3.1
-  hooks:
-    - id: docformatter
-      args: [--in-place]
+# - repo: https://github.com/myint/docformatter
+#   rev: v1.3.1
+#   hooks:
+#     - id: docformatter
+#       args: [--in-place]

@@ -50,8 +50,7 @@ def approx_quantile(t: torch.Tensor, fraction: float, bound: int = 2 ** 24) -> f
 class LinearQuantization(torch.autograd.Function):
     """Straight-Through Gradient Estimator.
 
-    Please look for detailed description on arguments in
-    [linear\_quantize\_callback][qsparse.quantize.linear_quantize_callback].
+    Please look for detailed description on arguments in [linear\_quantize\_callback][qsparse.quantize.linear_quantize_callback].
     """
 
     @staticmethod
@@ -92,9 +91,7 @@ def linear_quantize_callback(
     decimal: TensorOrInt = 5,
     channel_index: int = 1,
 ) -> torch.Tensor:
-    """quantization function with type signature of.
-
-    [QuantizeCallback][qsparse.common.QuantizeCallback]
+    """quantization function with type signature of [QuantizeCallback][qsparse.common.QuantizeCallback].
 
     Args:
         inp (torch.Tensor): input tensor
@@ -152,8 +149,7 @@ def arg_decimal_min_mse(
 class QuantizeLayer(nn.Module):
     """Applies quantization over input tensor.
 
-    Please look for detailed description in
-    [quantize][qsparse.quantize.quantize]
+    Please look for detailed description in [quantize][qsparse.quantize.quantize]
     """
 
     def __init__(
