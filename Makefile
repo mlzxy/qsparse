@@ -24,7 +24,8 @@ test:
 
 doc:
 	mkdocs build
-	perl -i -pe's/docs\/assets/assets/g'  site/index.html
+	perl -i -pe's/docs\/assets/assets/g'  site/**/*.html
+	cp ./LICENSE.txt site/
 
 dependency:
 	python3 -m pip install -r requirements.txt -r requirements.dev.txt --user

@@ -1,4 +1,4 @@
-site_name: QSparse - Joint Quantization & Pruning in PyTorch
+site_name: QSPARSE - Joint Quantization & Pruning in PyTorch
 site_url: "https://qsparse.readthedocs.io/en/latest/"
 repo_url: "https://github.com/mlzxy/qsparse"
 edit_uri: edit/main/docs/
