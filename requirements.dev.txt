@@ -16,4 +16,4 @@ torch
 torchvision
 typing_extensions
 coverage-badge
-mkdocs-jupyter
+mkdocs-jupyter>=0.18.0
