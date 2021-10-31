@@ -8,7 +8,7 @@ import torch.nn as nn
 
 from qsparse.common import QuantizeCallback, TensorOrInt, ensure_tensor
 from qsparse.imitation import imitate
-from qsparse.util import nd_slice
+from qsparse.util import get_option, nd_slice
 
 __all__ = [
     "quantize",
@@ -169,9 +169,10 @@ class QuantizeLayer(nn.Module):
         name: str = "",
     ):
         super().__init__()
-        print(
-            f"[Quantize{name if name == '' else f' @ {name}'}] bits={bits} channelwise={channelwise} window_size={window_size} timeout={timeout}"
-        )
+        if get_option("log_on_created"):
+            print(
+                f"[Quantize{name if name == '' else f' @ {name}'}] bits={bits} channelwise={channelwise} window_size={window_size} timeout={timeout}"
+            )
         self.window = deque(maxlen=window_size)
         self.window_size = window_size
         self.name = name

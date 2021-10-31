@@ -1,7 +1,33 @@
-from typing import List
+from typing import List, Optional
 
 import torch
 import torch.nn as nn
+
+_options_ = {"log_on_created": True}
+
+
+def set_options(log_on_created: Optional[bool] = None):
+    """set QSPARSE options. Only the options given will be updated. The exported alias of this function is `set_qsparse_options`.
+
+    Args:
+        log_on_created (Optional[bool], optional): If set to True, QSPARSE will log into console when every prune/quantize layer is created, the built-in value is True. Defaults to None.
+    """
+    if log_on_created is not None:
+        _options_["log_on_created"] = log_on_created
+
+
+def get_option(key: str):
+    """return the requested option. The exported alias of this function is `get_qsparse_option`.
+
+    Args:
+        key (str): option name
+
+    Returns:
+        option value
+    """
+    assert key in ("log_on_created")
+
+    return _options_[key]
 
 
 def auto_name_prune_quantize_layers(net: nn.Module) -> nn.Module:

@@ -1,7 +1,13 @@
 import numpy as np
 import torch
 
-from qsparse import auto_name_prune_quantize_layers, prune, quantize
+from qsparse import (
+    auto_name_prune_quantize_layers,
+    get_qsparse_option,
+    prune,
+    quantize,
+    set_qsparse_options,
+)
 from qsparse.quantize import approx_quantile
 
 
@@ -32,3 +38,14 @@ def test_approx_quantile():
         data, 0.5, bound=500
     )  # use a small bound to trigger approximate quantile computation
     assert np.isclose(accurate, approximate, rtol=0.05)
+
+
+def test_option(capsys):
+    set_qsparse_options()
+    set_qsparse_options(log_on_created=False)
+    assert get_qsparse_option("log_on_created") is False
+    prune(sparsity=0.5)
+    quantize(bits=8)
+    captured = capsys.readouterr()
+    assert "[Prune]" not in captured.out
+    assert "[Quantize]" not in captured.out

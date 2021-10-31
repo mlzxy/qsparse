@@ -93,6 +93,9 @@ def test_weight():
         get_sparsity(pconv.weight), 0.5, atol=0.1
     ), "sparsification schedule shall only be triggered during training"
 
+    with pytest.raises(ValueError):  # shall only accept module input or no input
+        prune(torch.rand((10,)))
+
 
 def test_callback():
     sparsity = 0.5

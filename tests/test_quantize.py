@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 import torch
 import torch.nn.functional as F
 
@@ -67,6 +68,9 @@ def test_weight():
         .detach()
         .numpy()
     ).sum() != 0, "quantization schedule shall only be triggered during training"
+
+    with pytest.raises(ValueError):  # shall only accept module input or no input
+        quantize(torch.rand((10,)))
 
 
 def test_callback():

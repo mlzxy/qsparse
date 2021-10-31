@@ -7,7 +7,7 @@ import torch.nn as nn
 
 from qsparse.common import PruneCallback
 from qsparse.imitation import imitate
-from qsparse.util import nd_slice
+from qsparse.util import get_option, nd_slice
 
 __all__ = ["prune", "unstructured_prune_callback", "structured_prune_callback"]
 
@@ -86,9 +86,10 @@ class PruneLayer(nn.Module):
         name="",
     ):
         super().__init__()
-        print(
-            f"[Prune{name if name == '' else f' @ {name}'}] start = {start} interval = {interval} repetition = {repetition} sparsity = {sparsity} window_size = {window_size} collapse = {collapse} "
-        )
+        if get_option("log_on_created"):
+            print(
+                f"[Prune{name if name == '' else f' @ {name}'}] start = {start} interval = {interval} repetition = {repetition} sparsity = {sparsity} window_size = {window_size} collapse = {collapse} "
+            )
         self.schedules = [start + interval * (1 + i) for i in range(repetition)]
         self.window = deque(maxlen=window_size)
         self.start = start
