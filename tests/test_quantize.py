@@ -93,7 +93,7 @@ def test_callback():
             )
 
 
-def test_interger_arithmetic():
+def test_integer_arithmetic():
     ni = 7
     no = 6
     input = torch.randint(-128, 127, size=(3, 10, 32, 32))
@@ -109,7 +109,7 @@ def test_interger_arithmetic():
         qconv(input_float)
     output_float = linear_quantize_callback(qconv(input_float), 8, no)
 
-    # quantized output in 8-bit interger
+    # quantized output in 8-bit integer
     weight = qconv.weight * (2.0 ** qconv.quantize.decimal).view(-1, 1, 1, 1)
     output_int = F.conv2d(input.int(), weight.int())
     for i in range(output_int.shape[1]):
@@ -120,4 +120,4 @@ def test_interger_arithmetic():
     diff = (
         output_float.detach().numpy() - (output_int.float() / 2 ** no).detach().numpy()
     )
-    assert np.all(diff == 0), "shall be able to fully match with interger arithmetic"
+    assert np.all(diff == 0), "shall be able to fully match with integer arithmetic"
