@@ -17,7 +17,7 @@ jobs:
         with:
           python-version: 3.9
       - name: Install dependencies
-        run: make dependency
+        run: make dependency github_action_fix
       - name: Run tests with pytest
         run: make test
       - name: Build Documentation

@@ -38,3 +38,7 @@ install: dependency
 publish:
 	python3 setup.py sdist
 	twine upload dist/*
+
+github_action_fix:
+	python3 -m pip install ipykernel
+	python3 -m ipykernel install --user
