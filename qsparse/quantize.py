@@ -69,7 +69,7 @@ class LinearQuantization(torch.autograd.Function):
         if isinstance(decimal, torch.Tensor) and sum(decimal.shape) > 1:
             assert (
                 len(decimal) == input.shape[channel_index]
-            ), "channel of input and decimal must be equal in vector quantization"
+            ), "channel of input and decimal must be equal in channel-wise quantization"
             shape[channel_index] = -1
             tof, toi = tof.view(*shape), toi.view(*shape)
         ctx.save_for_backward(ensure_tensor(limit), ensure_tensor(tof))
@@ -96,7 +96,7 @@ def linear_quantize_callback(
     Args:
         inp (torch.Tensor): input tensor
         bits (int, optional): bitwidth. Defaults to 8.
-        decimal (TensorOrInt, optional): decimal bits, will be tensor of decimal bits for vector quantization. Defaults to 5.
+        decimal (TensorOrInt, optional): decimal bits, will be tensor of decimal bits for channel-wise quantization. Defaults to 5.
         channel_index (int, optional): dimension index for channel. Defaults to 1.
 
     Returns:
@@ -334,7 +334,7 @@ def quantize(
     Args:
         inp (nn.Module, optional): input module whose weight is to be quantized. Defaults to None.
         bits (int, optional): bitwidth for weight. Defaults to 8.
-        channelwise (int, optional): dimension index for channel. Defaults to 1. When channelwise >= 0, vector quantization is enabled. When set to -1, vector quantization is disabled.
+        channelwise (int, optional): dimension index for channel. Defaults to 1. When channelwise >= 0, channel-wise quantization is enabled. When set to -1, channel-wise quantization is disabled.
         decimal_range (Tuple[int, int], optional): search range of decimal bits. Defaults to (0, 20).
         saturate_range (Tuple[float, float], optional): quantiles used to clamp tensors before searching decimal bits. Defaults to (0, 1).
         timeout (int, optional): the steps to compute the best decimal bits. Defaults to 1000.

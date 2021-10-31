@@ -23,7 +23,7 @@ test:
 
 
 doc:
-	mkdocs build
+	PYTHONPATH=`pwd` mkdocs build
 	perl -i -pe's/docs\/assets/assets/g'  site/**/*.html
 	cp ./LICENSE.txt site/
 
