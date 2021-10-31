@@ -241,6 +241,7 @@ def prune(
     repetition: int = 4,
     window_size: int = 1,
     strict: bool = True,
+    collapse: Union[str, int] = "auto",
     # for customization
     callback: PruneCallback = unstructured_prune_callback,
     # for debug purpose
@@ -259,6 +260,7 @@ def prune(
         window_size (int, optional): number of input tensors used for computing the binary mask. Defaults to 1, means using only current input.
         strict (bool, optional): whether enforcing the shape of the binary mask to be equal to the input tensor. Defaults to True.
                                  When strict=False, it will try to expand the binary mask to matched the input tensor shape during evaluation, useful for tasks whose test images are larger, like super resolution.
+        collapse (Union[str, int]): which dimension to ignore when creating binary mask. It is usually set to 0 for the batch dimension during pruning activations, and -1 when pruning weights. Default to "auto", means setting `collapse` automatically based on `inp` parameter.
         callback (PruneCallback, optional): callback for actual operation of pruning tensor, used for customization. Defaults to [unstructured\_prune\_callback][qsparse.sparse.unstructured_prune_callback].
         name (str, optional): name of the prune layer created, used for better logging. Defaults to "".
 
@@ -267,6 +269,8 @@ def prune(
     """
 
     def get_prune_layer(feature_collapse=0):
+        if collapse != "auto":
+            feature_collapse = collapse
         return PruneLayer(
             start=int(start),
             sparsity=sparsity,

@@ -35,7 +35,7 @@ def create_p_q(train_mode, epoch_size):
         if "quantize" in train_mode:
             return (
                 quantize(
-                    timeout=epoch_size * (3 if quantize_first else 2),
+                    timeout=epoch_size * (3 if quantize_first else 7),
                     channelwise=-1,
                     decimal_range=(1, 7),
                     window_size=bs,
@@ -43,7 +43,7 @@ def create_p_q(train_mode, epoch_size):
                 if len(args) == 0
                 else quantize(
                     args[0],
-                    timeout=epoch_size * (2 if quantize_first else 1),
+                    timeout=epoch_size * (2 if quantize_first else 6),
                     channelwise=c or 1,
                     bias_bits=20,
                 )
@@ -53,8 +53,8 @@ def create_p_q(train_mode, epoch_size):
 
     def p(*args):
         kw = {
-            "start": epoch_size * (4 if quantize_first else 0.5),
-            "interval": epoch_size * 0.4,
+            "start": epoch_size * (4 if quantize_first else 2),
+            "interval": epoch_size * 1,
             "repetition": 3,
             "sparsity": 0.5,
         }
@@ -257,7 +257,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
-# qsparse: Test set: Average loss: 0.0270, Accuracy: 9911/10000 (99%)
-# float: Test set: Average loss: 0.0234, Accuracy: 9922/10000 (99%)
