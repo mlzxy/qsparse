@@ -1,4 +1,7 @@
 
+More examples are provided at [qsparse-examples](https://github.com/mlzxy/qsparse-examples).
+
+---
 # MNIST Example
 
 To train a full precision network:
