@@ -2,9 +2,22 @@
 
 import os
 import re
-import socket
 from setuptools import Extension, find_packages, setup
-from qsparse import __version__
+
+
+# copied from https://stackoverflow.com/a/21784019/6238109
+def get_version(filename):
+    here = os.path.dirname(os.path.abspath(__file__))
+    f = open(os.path.join(here, filename))
+    version_file = f.read()
+    f.close()
+    version_match = re.search(r"^__version__ = ['\"]([^'\"]*)['\"]", version_file, re.M)
+    if version_match:
+        return version_match.group(1)
+    raise RuntimeError("Unable to find version string.")
+
+
+__version__ = get_version("qsparse/__init__.py")
 
 
 with open("README.md", "rb") as f:
