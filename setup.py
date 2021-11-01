@@ -45,7 +45,7 @@ setup(
     long_description_content_type="text/markdown",
     author="Xinyu Zhang, Ian Colbert, Srinjoy Das, Ken Kreutz-Delgado",
     author_email="xiz368@eng.ucsd.edu",
-    url="https://github.com/mlzxy/qsparse",
+    url="https://qsparse.readthedocs.io/",
     install_requires=load_requirements(),
     python_requires=">=3.6",
     keywords=[
