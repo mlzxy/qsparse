@@ -14,3 +14,5 @@ if __name__ == "__main__":
     shell("mkdir -p site")
     shell("cp ./LICENSE.txt site/")
     shell("cp -r ./docs site/")
+    shell("python3 -m pip install ipykernel")
+    shell("python3 -m ipykernel install --user")
