@@ -46,6 +46,7 @@ setup(
     author="Xinyu Zhang, Ian Colbert, Srinjoy Das, Ken Kreutz-Delgado",
     author_email="xiz368@eng.ucsd.edu",
     url="https://qsparse.readthedocs.io/",
+    download_url="https://github.com/mlzxy/qsparse/tags",
     install_requires=load_requirements(),
     python_requires=">=3.6",
     keywords=[
