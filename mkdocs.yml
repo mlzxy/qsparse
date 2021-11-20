@@ -10,6 +10,7 @@ nav:
     - API Reference:
       - sparse: "reference/sparse.md"
       - quantize: "reference/quantize.md"
+      - convert: "reference/convert.md"
       - imitation: "reference/imitation.md"
       - common: "reference/common.md"
       - util: "reference/util.md"
