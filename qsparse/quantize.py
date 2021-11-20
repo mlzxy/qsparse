@@ -349,6 +349,19 @@ def quantize(
         nn.Module: input module with its weight quantized or a instance of [QuantizeLayer][qsparse.quantize.QuantizeLayer] for feature quantization
     """
 
+    kwargs = dict(
+        bits=bits,
+        channelwise=channelwise,
+        decimal_range=decimal_range,
+        saturate_range=saturate_range,
+        timeout=timeout,
+        interval=interval,
+        window_size=window_size,
+        callback=callback,
+        bias_bits=bias_bits,
+        name=name,
+    )
+
     def get_quantize_layer(feature_collapse=0, is_bias=False):
         if bias_bits == -1 and is_bias:
             return lambda a: a
@@ -367,7 +380,9 @@ def quantize(
             )
 
     if inp is None:
-        return get_quantize_layer()
+        layer = get_quantize_layer()
+        setattr(layer, "_kwargs", kwargs)
+        return layer
     elif isinstance(inp, nn.Module):
         return imitate(
             inp,

@@ -269,6 +269,18 @@ def prune(
         nn.Module: input module with its weight pruned or a instance of [PruneLayer][qsparse.sparse.PruneLayer] for feature pruning
     """
 
+    kwargs = dict(
+        sparsity=sparsity,
+        start=start,
+        interval=interval,
+        repetition=repetition,
+        window_size=window_size,
+        strict=strict,
+        collapse=collapse,
+        callback=callback,
+        name=name,
+    )
+
     def get_prune_layer(feature_collapse=0):
         if collapse != "auto":
             feature_collapse = collapse
@@ -285,7 +297,9 @@ def prune(
         )
 
     if inp is None:
-        return get_prune_layer()
+        layer = get_prune_layer()
+        setattr(layer, "_kwargs", kwargs)
+        return layer
     elif isinstance(inp, nn.Module):
         return imitate(inp, "prune", get_prune_layer(-1))
     else:
