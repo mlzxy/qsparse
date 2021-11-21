@@ -1,4 +1,5 @@
 import copy
+from collections import defaultdict
 from typing import Mapping, Optional, Sequence, Tuple, Type, Union
 
 import torch.nn as nn
@@ -16,7 +17,7 @@ def convert(  # noqa: C901
     weight_layers: Sequence[Type[nn.Module]] = [nn.Conv2d],
     activation_layers: Sequence[Type[nn.Module]] = [nn.BatchNorm2d],
     input: bool = False,
-    log: bool = False,
+    log: bool = True,
     excluded_weight_layer_indexes: Sequence[Tuple[Type[nn.Module], Sequence[int]]] = [],
     excluded_activation_layer_indexes: Sequence[
         Tuple[Type[nn.Module], Sequence[int]]
@@ -32,7 +33,7 @@ def convert(  # noqa: C901
         weight_layers (Sequence[Type[nn.Module]], optional): which layers to apply operator to transform weights. Defaults to [nn.Conv2d].
         activation_layers (Sequence[Type[nn.Module]], optional): which layers to apply operator to transform output activations. Defaults to [nn.BatchNorm2d].
         input (bool, optional): whether apply operator to input. Defaults to False.
-        log (bool, optional): whether print the conversion log. Defaults to False.
+        log (bool, optional): whether print the conversion log. Defaults to True.
         excluded_weight_layer_indexes (Sequence[Tuple[Type[nn.Module], Sequential[int]]], optional): indexes of layers excluded in weight transformations from conversion. Defaults to [].
         excluded_activation_layer_indexes (Sequence[Tuple[Type[nn.Module], Sequential[int]]], optional): indexes of layers excluded in activation transformations from conversion. Defaults to [].
 
@@ -48,7 +49,9 @@ def convert(  # noqa: C901
             print(msg)
 
     def mstr(m) -> str:
-        if isinstance(m, nn.Module):
+        if isinstance(m, nn.Sequential):
+            return mstr(m[0])
+        elif isinstance(m, nn.Module):
             return m.__class__.__name__
         else:
             return m.__name__
@@ -75,7 +78,7 @@ def convert(  # noqa: C901
                     if mstr(layer) == mstr(layer_type):
                         total += 1
                 else:
-                    total += _count_occurrence(layer)
+                    total += _count_occurrence(layer, layer_type)
             return total
 
         return {mstr(l): _count_occurrence(mod, l) for l in layer_types}
@@ -83,33 +86,37 @@ def convert(  # noqa: C901
     def excluded_layer_indexes_to_dict(
         layer_indexes, layers_count
     ) -> Mapping[str, Sequence[int]]:
-        return {
-            mstr(cls): [l if l >= 0 else (l + layers_count[mstr(cls)]) for l in indexes]
-            for cls, indexes in layer_indexes
-        }
+        return defaultdict(
+            list,
+            {
+                mstr(cls): [
+                    l if l >= 0 else (l + layers_count[mstr(cls)]) for l in indexes
+                ]
+                for cls, indexes in layer_indexes
+            },
+        )
 
     weight_counter = {mstr(c): 0 for c in weight_layers}
-    weight_total_layers_counts = count_occurrence(
-        model, [a for a, _ in excluded_weight_layer_indexes]
-    )
+    weight_total_layers_counts = count_occurrence(model, weight_layers)
     excluded_weight_layer_indexes = excluded_layer_indexes_to_dict(
         excluded_weight_layer_indexes, weight_total_layers_counts
     )
 
     activation_counter = {mstr(c): 0 for c in activation_layers}
-    activation_total_layers_counts = count_occurrence(
-        model, [a for a, _ in excluded_activation_layer_indexes]
-    )
+    activation_total_layers_counts = count_occurrence(model, activation_layers)
     excluded_activation_layer_indexes = excluded_layer_indexes_to_dict(
         excluded_activation_layer_indexes, activation_total_layers_counts
     )
 
-    operator_name = str(operator).replace("(", "").replace(")", "")
+    operator_name = str(operator).lower()
+    for c in ["(", ")", "layer"]:
+        operator_name = operator_name.replace(c, "")
+    operator_name = f"`{operator_name}`"
 
-    def _convert(mod: nn.Module, scope: str = "") -> nn.Module:
+    def _convert_weight(mod: nn.Module, scope: str = "") -> nn.Module:
         reassign = {}
         for name, m in mod.named_children():
-            origin_m = m
+            modified = False
             if not isinstance(m, nn.Sequential):
                 if mstr(m) in weight_counter:
                     if (
@@ -118,10 +125,24 @@ def convert(  # noqa: C901
                     ):
                         _print(f"Apply {operator_name} on the {scope}.{name} weight")
                         m = apply_operator(m)
+                        modified = True
                     else:
                         _print(f"Exclude {scope}.{name} weight")
                     weight_counter[mstr(m)] += 1
+                if modified:
+                    reassign[name] = m
+            else:
+                _convert_weight(m, f"{scope}.{name}.")
 
+        for key, value in reassign.items():
+            mod._modules[key] = value
+        return mod
+
+    def _convert_activation(mod: nn.Module, scope: str = "") -> nn.Module:
+        reassign = {}
+        for name, m in mod.named_children():
+            origin_m = m
+            if (not isinstance(m, nn.Sequential)) or hasattr(m, "_qsparse_conversion"):
                 if mstr(m) in activation_counter:
                     if (
                         activation_counter[mstr(m)]
@@ -130,23 +151,22 @@ def convert(  # noqa: C901
                         _print(
                             f"Apply {operator_name} on the {scope}.{name} activation"
                         )
-                        m = [m, apply_operator()]
+                        m = nn.Sequential(m, apply_operator())
+                        setattr(m, "_qsparse_conversion", True)
                     else:
                         _print(f"Exclude {scope}.{name} activation")
                     activation_counter[mstr(m)] += 1
-
                 if origin_m is not m:
-                    if isinstance(m, list):
-                        reassign[name] = nn.Sequential(*m)
-                    else:
-                        reassign[name] = m
+                    reassign[name] = m
             else:
-                _convert(m, f"{scope}.{name}.")
+                _convert_activation(m, f"{scope}.{name}.")
+
         for key, value in reassign.items():
             mod._modules[key] = value
         return mod
 
-    model = _convert(model)
+    model = _convert_weight(model)
+    model = _convert_activation(model)
     if input:
         model = nn.Sequential(apply_operator(), model)
 
