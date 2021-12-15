@@ -1,4 +1,5 @@
 from qsparse.convert import convert
+from qsparse.fuse import fuse_bn
 from qsparse.quantize import linear_quantize_callback, quantize
 from qsparse.sparse import prune, structured_prune_callback, unstructured_prune_callback
 from qsparse.util import auto_name_prune_quantize_layers
@@ -15,6 +16,7 @@ __all__ = (
     "auto_name_prune_quantize_layers",
     "set_qsparse_options",
     "get_qsparse_option",
+    "fuse_bn",
 )
 
 __version__ = "1.1.0"
