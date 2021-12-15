@@ -72,9 +72,17 @@ def test_complex_sequential():
     nn.init.uniform_(list(net4.children())[1].bias)
     net4(inputs)
 
-    net = nn.Sequential(net1, nn.Sequential(net3, net4), net2)
+    bn = nn.BatchNorm2d(10)
+    nn.init.uniform_(bn.weight)
+    nn.init.uniform_(bn.bias)
+    bn(inputs)
+
+    net = nn.Sequential(
+        net1, nn.Sequential(net3, net4), net2, nn.Conv2d(10, 10, 3), nn.Sequential(bn)
+    )
     net.eval()
     gt = net(inputs)
     net_fused = fuse_bn(net)
+    assert "batchnorm" not in str(net_fused).lower()
     pred = net_fused(inputs)
     assert torch.allclose(gt, pred, atol=1e-5)

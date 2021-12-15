@@ -1,5 +1,5 @@
 from copy import copy
-from typing import Dict, Iterable, Mapping, Optional
+from typing import Dict, Iterable, Mapping, Optional, Tuple
 
 import torch
 import torch.nn as nn
@@ -10,7 +10,7 @@ class BNFuser(Protocol):
     """Type signature of the handers used in fuse_bn."""
 
     def __call__(self, layer: nn.Module, bn: nn.Module) -> nn.Module:
-        """fuse the batch normalization module into the corresponding layer.
+        """Fuse batch norm into the previous layer.
 
         Args:
             layer (nn.Module): layers like Conv2d, Linear, etc.
@@ -21,7 +21,7 @@ class BNFuser(Protocol):
         """
 
 
-def fuse_bn_conv2d(conv: nn.Module, bn: nn.Module) -> nn.Module:
+def conv2d_bn_fuser(conv: nn.Module, bn: nn.Module) -> nn.Module:
     """BNFuser for Conv2d"""
     w = conv._parameters["weight"].detach()
     b = conv._parameters["bias"].detach() if conv.bias is not None else 0
@@ -36,7 +36,7 @@ def fuse_bn_conv2d(conv: nn.Module, bn: nn.Module) -> nn.Module:
     return conv
 
 
-def fuse_bn_linear(linear: nn.Module, bn: nn.Module) -> nn.Module:
+def linear_bn_fuser(linear: nn.Module, bn: nn.Module) -> nn.Module:
     """BNFuser for Linear"""
     w = linear._parameters["weight"].detach()
     b = linear._parameters["bias"].detach() if linear.bias is not None else 0
@@ -51,7 +51,7 @@ def fuse_bn_linear(linear: nn.Module, bn: nn.Module) -> nn.Module:
     return linear
 
 
-def fuse_bn_deconv2d(deconv: nn.Module, bn: nn.Module) -> nn.Module:
+def deconv2d_bn_fuser(deconv: nn.Module, bn: nn.Module) -> nn.Module:
     """BNFuser for ConvTranspose2d"""
     w = deconv._parameters["weight"].detach()
     b = deconv._parameters["bias"].detach() if deconv.bias is not None else 0
@@ -67,7 +67,7 @@ def fuse_bn_deconv2d(deconv: nn.Module, bn: nn.Module) -> nn.Module:
 
 
 default_handlers = dict(
-    Conv2d=fuse_bn_conv2d, Linear=fuse_bn_linear, ConvTranspose2d=fuse_bn_deconv2d
+    Conv2d=conv2d_bn_fuser, Linear=linear_bn_fuser, ConvTranspose2d=deconv2d_bn_fuser
 )  # type: Dict[str, BNFuser]
 
 
@@ -91,30 +91,58 @@ def fuse_bn(
     for name in layers:
         assert name in handlers, f"layer {name} is not in handlers"
 
-    def is_bn(layer):
+    def is_bn(layer: nn.Module) -> bool:
         return layer.__class__.__name__.lower().startswith("batchnorm")
 
-    def fuse_bn_sequential(seq):
+    def get_layer_type(layer: Optional[nn.Module]) -> str:
+        if layer is None:
+            return ""
+        else:
+            return layer.__class__.__name__
+
+    def fuse_bn_sequential(
+        seq: nn.Sequential, input: Optional[nn.Module] = None
+    ) -> Tuple[nn.Module, Optional[nn.Module]]:
         sequence = []
+
+        def get_prev_layer():
+            return sequence[-1] if len(sequence) > 0 else input
+
         for layer in seq.children():
             if is_bn(layer):
                 bn = layer
-                operation = sequence[-1]
-                layer_type = operation.__class__.__name__
+                operation = get_prev_layer()
+                layer_type = get_layer_type(operation)
                 if layer_type in layers:
-                    sequence[-1] = handlers[layer_type](operation, bn)
+                    operation = handlers[layer_type](operation, bn)
+                    if len(sequence) > 0:
+                        sequence[-1] = operation
+                    else:
+                        input = operation
                 else:
                     sequence.append(bn)
             elif isinstance(layer, nn.Sequential):
-                sequence.append(fuse_bn_sequential(layer))
+                layer, prev_layer = fuse_bn_sequential(layer, get_prev_layer())
+                if prev_layer is not None:
+                    if len(sequence) > 0:
+                        sequence[-1] = prev_layer
+                    else:
+                        input = prev_layer
+                if layer is not None:
+                    sequence.append(layer)
             else:
                 sequence.append(layer)
-        return nn.Sequential(*sequence) if len(sequence) > 1 else sequence[0]
+        if len(sequence) == 0:
+            return None, input
+        elif len(sequence) == 1:
+            return sequence[0], input
+        else:
+            return nn.Sequential(*sequence), input
 
     if isinstance(model, nn.Sequential):
-        return fuse_bn_sequential(model)
+        return fuse_bn_sequential(model)[0]
     else:
         for name, m in model.named_children():
             if isinstance(m, nn.Sequential):
-                model._modules[name] = fuse_bn_sequential(m)
+                model._modules[name] = fuse_bn_sequential(m)[0]
         return model
