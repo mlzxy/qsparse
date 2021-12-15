@@ -86,7 +86,7 @@ def fuse_bn(
     Returns:
         nn.Module: network with bn fused
     """
-    handlers = copy(default_handlers).update(handlers or {})
+    handlers = {**copy(default_handlers), **(handlers or {})}
     layers = set(layers)
     for name in layers:
         assert name in handlers, f"layer {name} is not in handlers"
