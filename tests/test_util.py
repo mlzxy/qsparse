@@ -1,5 +1,8 @@
+import logging
+
 import numpy as np
 import torch
+import torch.nn as nn
 
 from qsparse import (
     auto_name_prune_quantize_layers,
@@ -41,6 +44,12 @@ def test_approx_quantile():
 
 
 def test_option(capsys):
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(message)s",
+        handlers=[logging.StreamHandler()],
+    )
+
     set_qsparse_options()
     set_qsparse_options(log_on_created=False)
     assert get_qsparse_option("log_on_created") is False
@@ -49,3 +58,14 @@ def test_option(capsys):
     captured = capsys.readouterr()
     assert "[Prune]" not in captured.out
     assert "[Quantize]" not in captured.out
+
+    set_qsparse_options(log_during_train=False)
+    assert get_qsparse_option("log_during_train") is False
+    layer = nn.Sequential(
+        quantize(bits=8, timeout=1), prune(sparsity=0.5, start=1, interval=1)
+    )
+    for _ in range(20):
+        layer(torch.rand(1, 10))
+    captured = capsys.readouterr()
+    assert "[Prune" not in captured.out
+    assert "[Quantize" not in captured.out
