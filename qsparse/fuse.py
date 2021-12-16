@@ -6,6 +6,8 @@ import torch
 import torch.nn as nn
 from typing_extensions import Protocol
 
+from qsparse.util import nn_module
+
 
 class BNFuser(Protocol):
     """Type signature of the handers used in fuse_bn."""
@@ -144,10 +146,14 @@ def fuse_bn(  # noqa: C901
         else:
             return nn.Sequential(*sequence), input
 
-    if isinstance(model, nn.Sequential):
-        return fuse_bn_sequential(model)[0]
+    if isinstance(nn_module(model), nn.Sequential):
+        _model = fuse_bn_sequential(nn_module(model))[0]
+        if model == nn_module(model):
+            model = _model
+        else:
+            model.module = _model
     else:
-        for name, m in model.named_children():
+        for name, m in nn_module(model).named_children():
             if isinstance(m, nn.Sequential):
-                model._modules[name] = fuse_bn_sequential(m)[0]
-        return model
+                nn_module(model)._modules[name] = fuse_bn_sequential(m)[0]
+    return model

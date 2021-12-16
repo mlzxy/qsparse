@@ -71,3 +71,18 @@ def nd_slice(d: int, dim: int = 0, start: int = 0, end: int = 1) -> List[slice]:
     indexes = [slice(None)] * d
     indexes[dim] = slice(start, end)
     return indexes
+
+
+def nn_module(mod: nn.Module) -> nn.Module:
+    """Return actual module of a `nn.Module` or `nn.DataParallel`.
+
+    Args:
+        mod (nn.Module): input pytorch module
+
+    Returns:
+        nn.Module: actual module
+    """
+    if hasattr(mod, "module"):
+        return mod.module
+    else:
+        return mod

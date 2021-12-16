@@ -124,3 +124,16 @@ def test_nop():
         lenet, prune(sparsity=0.5)
     )  # no weight/activation layers supplied
     assert str(lenet) == str(lenet_converted)
+
+
+def test_data_parallel():
+    lenet = LeNet()
+    data_parallel = nn.DataParallel(lenet)
+    data_parallel_quantized = convert(
+        data_parallel,
+        quantize(bits=8),
+        weight_layers=[nn.Conv2d, nn.Linear],
+        activation_layers=[nn.Conv2d, nn.Linear],
+        input=False,
+    )
+    assert "quantize" in str(data_parallel_quantized).lower()

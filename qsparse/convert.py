@@ -9,7 +9,7 @@ from torch.nn.modules.container import Sequential
 
 from qsparse.quantize import QuantizeLayer, quantize
 from qsparse.sparse import PruneLayer, prune
-from qsparse.util import auto_name_prune_quantize_layers
+from qsparse.util import auto_name_prune_quantize_layers, nn_module
 
 
 def convert(  # noqa: C901
@@ -172,10 +172,17 @@ def convert(  # noqa: C901
             mod._modules[key] = value
         return mod
 
-    model = _convert_weight(model)
-    model = _convert_activation(model)
+    def apply_to_input(mod):
+        return nn.Sequential(apply_operator(), mod)
+
+    model = _convert_weight(nn_module(model))
+    model = _convert_activation(nn_module(model))
     if input:
-        model = nn.Sequential(apply_operator(), model)
+        _model = apply_to_input(nn_module(model))
+        if model == nn_module(model):
+            model = _model
+        else:
+            model.module = _model
 
     model = auto_name_prune_quantize_layers(model)
     return model

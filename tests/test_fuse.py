@@ -15,6 +15,7 @@ def test_conv2d():
     gt = net(inputs)
     net_fused = fuse_bn(net)
     pred = net_fused(inputs)
+    assert "batchnorm" not in str(net_fused).lower()
     assert torch.allclose(gt, pred, atol=1e-5)
 
 
@@ -29,6 +30,7 @@ def test_linear():
     gt = net(inputs)
     net_fused = fuse_bn(net)
     pred = net_fused(inputs)
+    assert "batchnorm" not in str(net_fused).lower()
     assert torch.allclose(gt, pred, atol=1e-5)
 
 
@@ -43,6 +45,7 @@ def test_deconv2d():
     gt = net(inputs)
     net_fused = fuse_bn(net)
     pred = net_fused(inputs)
+    assert "batchnorm" not in str(net_fused).lower()
     assert torch.allclose(gt, pred, atol=1e-5)
 
 
@@ -85,4 +88,21 @@ def test_complex_sequential():
     net_fused = fuse_bn(net)
     assert "batchnorm" not in str(net_fused).lower()
     pred = net_fused(inputs)
+    assert torch.allclose(gt, pred, atol=1e-5)
+
+
+def test_data_parallel():
+    net = nn.Sequential(nn.Linear(20, 10), nn.BatchNorm1d(10))
+    net.train()
+    inputs = torch.randn(10, 20)
+    nn.init.uniform_(list(net.children())[1].weight)
+    nn.init.uniform_(list(net.children())[1].bias)
+
+    net = nn.DataParallel(net)
+    net(inputs)
+    net.eval()
+    gt = net(inputs)
+    net_fused = fuse_bn(net)
+    pred = net_fused(inputs)
+    assert "batchnorm" not in str(net_fused).lower()
     assert torch.allclose(gt, pred, atol=1e-5)
