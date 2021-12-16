@@ -1,3 +1,4 @@
+import logging
 import math
 import warnings
 from collections import deque
@@ -170,7 +171,7 @@ class QuantizeLayer(nn.Module):
     ):
         super().__init__()
         if get_option("log_on_created"):
-            print(
+            logging.info(
                 f"[Quantize{name if name == '' else f' @ {name}'}] bits={bits} channelwise={channelwise} window_size={window_size} timeout={timeout}"
             )
         self.window = deque(maxlen=window_size)
@@ -279,9 +280,10 @@ class QuantizeLayer(nn.Module):
                             self.callback,
                         )
                         self.decimal.data[i] = n
-                    print(
-                        f"[Quantize{self.name if self.name == '' else f' @ {self.name}'}] (channelwise) avg decimal = {self.decimal.float().mean().item()}"
-                    )
+                    if get_option("log_during_train"):
+                        logging.info(
+                            f"[Quantize{self.name if self.name == '' else f' @ {self.name}'}] (channelwise) avg decimal = {self.decimal.float().mean().item()}"
+                        )
                 else:
                     n = arg_decimal_min_mse(
                         torch.cat([a.reshape(-1) for a in self.window], dim=0),
@@ -290,9 +292,10 @@ class QuantizeLayer(nn.Module):
                         self.saturate_range,
                         self.callback,
                     )
-                    print(
-                        f"[Quantize{self.name if self.name == '' else f' @ {self.name}'}] decimal = {n}"
-                    )
+                    if get_option("log_during_train"):
+                        logging.info(
+                            f"[Quantize{self.name if self.name == '' else f' @ {self.name}'}] decimal = {n}"
+                        )
                     self.decimal.data[:] = n
 
                 self._quantized[0] = True

@@ -1,3 +1,4 @@
+import logging
 import warnings
 from collections import deque
 from typing import Iterable, List, Union
@@ -127,7 +128,7 @@ class PruneLayer(nn.Module):
     ):
         super().__init__()
         if get_option("log_on_created"):
-            print(
+            logging.info(
                 f"[Prune{name if name == '' else f' @ {name}'}] start = {start} interval = {interval} repetition = {repetition} sparsity = {sparsity} window_size = {window_size} collapse = {collapse} "
             )
         self.schedules = [start + interval * (1 + i) for i in range(repetition)]
@@ -233,9 +234,10 @@ class PruneLayer(nn.Module):
                     ).to(x.device)
 
                     active_ratio = self.mask.sum().item() / self.mask.size().numel()
-                    print(
-                        f"[Prune{self.name if self.name == '' else f' @ {self.name}'}] [Step {self._n_updates.item()}] active {active_ratio:.02f}, pruned {1 - active_ratio:.02f}, window_size = {len(self.window)}"
-                    )
+                    if get_option("log_during_train"):
+                        logging.info(
+                            f"[Prune{self.name if self.name == '' else f' @ {self.name}'}] [Step {self._n_updates.item()}] active {active_ratio:.02f}, pruned {1 - active_ratio:.02f}, window_size = {len(self.window)}"
+                        )
                     if len(self.window) < self.window_size:
                         warnings.warn(
                             f"window is not full when pruning, this will cause performance degradation! (window has {len(self.window)} elements while window_size parameter is {self.window_size})"
