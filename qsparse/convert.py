@@ -1,4 +1,5 @@
 import copy
+import logging
 from collections import defaultdict
 from typing import Mapping, Optional, Sequence, Tuple, Type, Union
 
@@ -46,7 +47,7 @@ def convert(  # noqa: C901
 
     def _print(msg):
         if log:
-            print(msg)
+            logging.info(msg)
 
     def mstr(m) -> str:
         if isinstance(m, nn.Sequential):

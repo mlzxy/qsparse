@@ -1,3 +1,4 @@
+import logging
 from copy import copy
 from typing import Dict, Iterable, Mapping, Optional, Tuple
 
@@ -71,10 +72,11 @@ default_handlers = dict(
 )  # type: Dict[str, BNFuser]
 
 
-def fuse_bn(
+def fuse_bn(  # noqa: C901
     model: nn.Module,
     layers: Iterable[str] = ["Conv2d", "Linear", "ConvTranspose2d"],
     handlers: Optional[Mapping[str, BNFuser]] = None,
+    log: bool = True,
 ) -> nn.Module:
     """Fuse the batch norm layers back to the previous conv/deconv/linear layers in a newtwork.
 
@@ -82,6 +84,7 @@ def fuse_bn(
         model (nn.Module): network
         layers (Iterable[str], optional): [description]. Defaults to ["Conv2d", "Linear", "ConvTranspose2d"].
         handlers (Optional[Mapping[str, BNFuser]], optional): Mapping from layer type to [BNFuser][qsparse.fuse.BNFuser]. Defaults to None, will use { Linear: [fuse\_bn\_linear][qsparse.fuse.fuse_bn_linear], Conv2d: [fuse\_bn\_conv2d][qsparse.fuse.fuse_bn_conv2d], ConvTranspose2d: [fuse\_bn\_deconv2d][qsparse.fuse.fuse_bn_deconv2d] }.
+        log (bool, optional): whether print the fuse log. Defaults to True.
 
     Returns:
         nn.Module: network with bn fused
@@ -114,6 +117,8 @@ def fuse_bn(
                 operation = get_prev_layer()
                 layer_type = get_layer_type(operation)
                 if layer_type in layers:
+                    if log:
+                        logging.info(f"Fuse {bn} into {operation}")
                     operation = handlers[layer_type](operation, bn)
                     if len(sequence) > 0:
                         sequence[-1] = operation
