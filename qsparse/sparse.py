@@ -2,6 +2,7 @@ import warnings
 from collections import deque
 from typing import Iterable, List, Union
 
+import numpy as np
 import torch
 import torch.nn as nn
 
@@ -9,17 +10,54 @@ from qsparse.common import PruneCallback
 from qsparse.imitation import imitate
 from qsparse.util import get_option, nd_slice
 
-__all__ = ["prune", "unstructured_prune_callback", "structured_prune_callback"]
+__all__ = [
+    "prune",
+    "unstructured_prune_callback",
+    "structured_prune_callback",
+    "unstructured_uniform_prune_callback",
+]
 
 
-def unstructured_prune_callback(
-    inp: List[torch.Tensor], sparsity: float
+def unstructured_uniform_prune_callback(
+    inp: List[torch.Tensor], sparsity: float, current_mask: torch.Tensor = None
 ) -> torch.Tensor:
     """unstructured pruning function with type signature of [PruneCallback][qsparse.common.PruneCallback].
 
     Args:
         inp (List[torch.Tensor]): input tensor list (see more in [PruneCallback][qsparse.common.PruneCallback])
         sparsity (float): target sparsity
+        current_mask (torch.Tensor, optional): current mask of the pruning procedure. Defaults to None.
+
+    Returns:
+        torch.Tensor: binary mask
+    """
+    assert len(inp) >= 1, "no input tensor is provided"
+    shape = inp[0].shape
+    if current_mask is not None:
+        cur_sparsity = current_mask.sum().item() / current_mask.numel()
+        mask = current_mask.to("cpu")
+    else:
+        mask = torch.ones(*shape, dtype=torch.bool)
+        cur_sparsity = 0
+    assert sparsity >= cur_sparsity, "only support pruning to a larger sparsity"
+    budget = int((sparsity - cur_sparsity) * np.prod(shape))
+    slots = mask.nonzero(as_tuple=True)
+    selected_indexes = np.random.choice(
+        range(len(slots[0])), size=budget, replace=False
+    )
+    mask[[slot[selected_indexes] for slot in slots]] = False
+    return mask
+
+
+def unstructured_prune_callback(
+    inp: List[torch.Tensor], sparsity: float, current_mask: torch.Tensor = None
+) -> torch.Tensor:
+    """unstructured pruning function with type signature of [PruneCallback][qsparse.common.PruneCallback].
+
+    Args:
+        inp (List[torch.Tensor]): input tensor list (see more in [PruneCallback][qsparse.common.PruneCallback])
+        sparsity (float): target sparsity
+        current_mask (torch.Tensor, optional): current mask of the pruning procedure. Defaults to None.
 
     Returns:
         torch.Tensor: binary mask
@@ -189,6 +227,7 @@ class PruneLayer(nn.Module):
                     self.mask.data = self.callback(
                         self.window,
                         self._cur_sparsity.item(),
+                        current_mask=self.mask.data,
                     ).to(x.device)
 
                     active_ratio = self.mask.sum().item() / self.mask.size().numel()

@@ -44,13 +44,19 @@ class QuantizeCallback(Protocol):
 class PruneCallback(Protocol):
     """Type signature of the callback used in PruneLayer."""
 
-    def __call__(self, inp: List[torch.Tensor], sparsity: float) -> torch.Tensor:
+    def __call__(
+        self,
+        inp: List[torch.Tensor],
+        sparsity: float,
+        current_mask: torch.Tensor = None,
+    ) -> torch.Tensor:
         """calculate the binary mask used for pruning with the input tensor and
         target sparsity.
 
         Args:
             inp (List[torch.Tensor]): input tensor list. Tensors in this list shall have the same shape and no batch dimension. For example, for CIFAR10 images, the shapes of the input tensors are `[(3, 32, 32), (3, 32, 32), ...]`
             sparsity (float): target sparsity (ratio of zeros)
+            current_mask (torch.Tensor, optional): current mask of the pruning procedure. Defaults to None.
 
         Returns:
             torch.Tensor: binary mask

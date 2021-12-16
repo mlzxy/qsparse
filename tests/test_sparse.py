@@ -2,7 +2,12 @@ import numpy as np
 import pytest
 import torch
 
-from qsparse import prune, structured_prune_callback, unstructured_prune_callback
+from qsparse import (
+    prune,
+    structured_prune_callback,
+    unstructured_prune_callback,
+    unstructured_uniform_prune_callback,
+)
 
 
 def test_feature():
@@ -105,8 +110,20 @@ def test_callback():
         mask = unstructured_prune_callback(
             [torch.rand(shape) for _ in range(10)], sparsity
         )
-        result_sparsity = mask.sum() / np.prod(mask.shape)
+        result_sparsity = (~mask).sum() / np.prod(mask.shape)
         assert np.isclose(sparsity, result_sparsity, atol=1 / np.prod(mask.shape))
+
+    for shape in [(3, 32, 32), (3, 32), (32)]:
+        mask = unstructured_uniform_prune_callback(
+            [torch.rand(shape) for _ in range(10)], sparsity
+        )
+        result_sparsity = (~mask).sum() / np.prod(mask.shape)
+        assert np.isclose(sparsity, result_sparsity, atol=1 / np.prod(mask.shape))
+    mask = unstructured_uniform_prune_callback(
+        [torch.rand(shape) for _ in range(10)], 0.7, current_mask=mask
+    )
+    result_sparsity = (~mask).sum() / np.prod(mask.shape)
+    assert np.isclose(0.7, result_sparsity, atol=1 / np.prod(mask.shape))
 
     # structured
     data = [torch.rand((32, 32, 32)) for _ in range(10)]
@@ -116,5 +133,5 @@ def test_callback():
             if i not in channels:
                 assert mask.shape[i] == 1
 
-        result_sparsity = mask.sum() / np.prod(mask.shape)
+        result_sparsity = (~mask).sum() / np.prod(mask.shape)
         assert np.isclose(sparsity, result_sparsity, atol=1 / np.prod(mask.shape))
