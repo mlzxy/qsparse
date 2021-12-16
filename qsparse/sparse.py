@@ -21,7 +21,9 @@ __all__ = [
 def unstructured_uniform_prune_callback(
     inp: List[torch.Tensor], sparsity: float, current_mask: torch.Tensor = None
 ) -> torch.Tensor:
-    """unstructured pruning function with type signature of [PruneCallback][qsparse.common.PruneCallback].
+    """unstructured uniform pruning function with type signature of [PruneCallback][qsparse.common.PruneCallback].
+    This function will prune uniformly without considering magnitude of the input tensors. If a current mask is provided,
+    this function will not reactivate those already pruned locations in current mask.
 
     Args:
         inp (List[torch.Tensor]): input tensor list (see more in [PruneCallback][qsparse.common.PruneCallback])
