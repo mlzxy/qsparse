@@ -1,5 +1,6 @@
 import copy
 import logging
+import warnings
 from collections import defaultdict
 from typing import Mapping, Optional, Sequence, Tuple, Type, Union
 
@@ -15,8 +16,8 @@ def convert(  # noqa: C901
     model: nn.Module,
     operator: Union[PruneLayer, QuantizeLayer],
     inplace: bool = False,
-    weight_layers: Sequence[Type[nn.Module]] = [nn.Conv2d],
-    activation_layers: Sequence[Type[nn.Module]] = [nn.BatchNorm2d],
+    weight_layers: Sequence[Type[nn.Module]] = [],
+    activation_layers: Sequence[Type[nn.Module]] = [],
     input: bool = False,
     log: bool = True,
     excluded_weight_layer_indexes: Sequence[Tuple[Type[nn.Module], Sequence[int]]] = [],
@@ -31,8 +32,8 @@ def convert(  # noqa: C901
         model (nn.Module): input network module
         operator (Union[PruneLayer, QuantizeLayer]): operator used to transform the weights and activations.
         inplace (bool, optional): whether mutates the original module. Defaults to False.
-        weight_layers (Sequence[Type[nn.Module]], optional): which layers to apply operator to transform weights. Defaults to [nn.Conv2d].
-        activation_layers (Sequence[Type[nn.Module]], optional): which layers to apply operator to transform output activations. Defaults to [nn.BatchNorm2d].
+        weight_layers (Sequence[Type[nn.Module]], optional): which layers to apply operator to transform weights. Defaults to [].
+        activation_layers (Sequence[Type[nn.Module]], optional): which layers to apply operator to transform output activations. Defaults to [].
         input (bool, optional): whether apply operator to input. Defaults to False.
         log (bool, optional): whether print the conversion log. Defaults to True.
         excluded_weight_layer_indexes (Sequence[Tuple[Type[nn.Module], Sequential[int]]], optional): indexes of layers excluded in weight transformations from conversion. Defaults to [].
@@ -44,6 +45,11 @@ def convert(  # noqa: C901
     assert isinstance(
         operator, (PruneLayer, QuantizeLayer)
     ), "`operator` does not belong to (PruneLayer, QuantizeLayer)"
+
+    if (len(weight_layers) + len(activation_layers)) == 0:
+        warnings.warn(
+            "No weight or activation layers specified, nothing will be converted."
+        )
 
     def _print(msg):
         if log:
