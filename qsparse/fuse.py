@@ -1,5 +1,5 @@
 import logging
-from copy import copy
+from copy import copy, deepcopy
 from typing import Dict, Iterable, Mapping, Optional, Tuple
 
 import torch
@@ -79,6 +79,7 @@ def fuse_bn(  # noqa: C901
     layers: Iterable[str] = ["Conv2d", "Linear", "ConvTranspose2d"],
     handlers: Optional[Mapping[str, BNFuser]] = None,
     log: bool = True,
+    inplace: bool = False,
 ) -> nn.Module:
     """Fuse the batch norm layers back to the previous conv/deconv/linear layers in a newtwork.
 
@@ -87,6 +88,7 @@ def fuse_bn(  # noqa: C901
         layers (Iterable[str], optional): [description]. Defaults to ["Conv2d", "Linear", "ConvTranspose2d"].
         handlers (Optional[Mapping[str, BNFuser]], optional): Mapping from layer type to [BNFuser][qsparse.fuse.BNFuser]. Defaults to None, will use { Linear: [fuse\_bn\_linear][qsparse.fuse.fuse_bn_linear], Conv2d: [fuse\_bn\_conv2d][qsparse.fuse.fuse_bn_conv2d], ConvTranspose2d: [fuse\_bn\_deconv2d][qsparse.fuse.fuse_bn_deconv2d] }.
         log (bool, optional): whether print the fuse log. Defaults to True.
+        inplace (bool, optional): whether mutates the original module. Defaults to False.
 
     Returns:
         nn.Module: network with bn fused
@@ -95,6 +97,9 @@ def fuse_bn(  # noqa: C901
     layers = set(layers)
     for name in layers:
         assert name in handlers, f"layer {name} is not in handlers"
+
+    if not inplace:
+        model = deepcopy(model)
 
     def is_bn(layer: nn.Module) -> bool:
         return layer.__class__.__name__.lower().startswith("batchnorm")
