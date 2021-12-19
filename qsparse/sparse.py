@@ -142,7 +142,6 @@ class PruneLayer(nn.Module):
         self.window_size = window_size
         self._collapse = collapse
         self.strict = strict
-        self.is_tracing = False
 
         for k in [
             "mask",
@@ -173,7 +172,7 @@ class PruneLayer(nn.Module):
         Returns:
             torch.Tensor: pruned tensor
         """
-        if not self.is_tracing and not self.initted:
+        if not self.initted:
             assert len(x.shape) > 1
             with torch.no_grad():
                 m_example = self.callback(
@@ -199,55 +198,54 @@ class PruneLayer(nn.Module):
             else:
                 return cond and self.training
 
-        if not self.is_tracing:
-            if should_prune(self._n_updates):
-                if self._collapse >= 0:
-                    for t in (
-                        x[nd_slice(len(x.shape), self._collapse, end=self.window_size)]
-                        .abs()
-                        .detach()
-                        .split(1)
-                    ):  # type: torch.Tensor
-                        self.window.append(t.squeeze(0).to("cpu"))
-                else:
-                    self.window.append(x.abs().detach().to("cpu"))
+        if should_prune(self._n_updates):
+            if self._collapse >= 0:
+                for t in (
+                    x[nd_slice(len(x.shape), self._collapse, end=self.window_size)]
+                    .abs()
+                    .detach()
+                    .split(1)
+                ):  # type: torch.Tensor
+                    self.window.append(t.squeeze(0).to("cpu"))
+            else:
+                self.window.append(x.abs().detach().to("cpu"))
 
-            # add window size check to avoid prune a layer which always set to eval
-            if (
-                (self._n_updates > self.start)
-                and (self._cur_sparsity < self.sparsity)
-                and self.training
-                and len(self.window) > 0
-            ):
-                if ((self._n_updates - self.start) % self.interval) == 0:
-                    ratio = (
-                        1.0
-                        - (self._n_updates.item() - self.start)
-                        / (self.interval * self.repetition)
-                    ) ** 3
-                    self._cur_sparsity[0] = self.sparsity * (1 - ratio)
+        # add window size check to avoid prune a layer which always set to eval
+        if (
+            (self._n_updates > self.start)
+            and (self._cur_sparsity < self.sparsity)
+            and self.training
+            and len(self.window) > 0
+        ):
+            if ((self._n_updates - self.start) % self.interval) == 0:
+                ratio = (
+                    1.0
+                    - (self._n_updates.item() - self.start)
+                    / (self.interval * self.repetition)
+                ) ** 3
+                self._cur_sparsity[0] = self.sparsity * (1 - ratio)
 
-                    if self._cur_sparsity > 0:
-                        self.mask.data = self.callback(
-                            self.window,
-                            self._cur_sparsity.item(),
-                            current_mask=self.mask.data,
-                        ).to(x.device)
+                if self._cur_sparsity > 0:
+                    self.mask.data = self.callback(
+                        self.window,
+                        self._cur_sparsity.item(),
+                        current_mask=self.mask.data,
+                    ).to(x.device)
 
-                        active_ratio = self.mask.sum().item() / self.mask.size().numel()
-                        if get_option("log_during_train"):
-                            logging.info(
-                                f"[Prune{self.name if self.name == '' else f' @ {self.name}'}] [Step {self._n_updates.item()}] active {active_ratio:.02f}, pruned {1 - active_ratio:.02f}, window_size = {len(self.window)}"
-                            )
-                        if len(self.window) < self.window_size:
-                            warnings.warn(
-                                f"window is not full when pruning, this will cause performance degradation! (window has {len(self.window)} elements while window_size parameter is {self.window_size})"
-                            )
-                        if not should_prune(self._n_updates + 1):
-                            # proactively free up memory
-                            self.window.clear()
-            if self.training:
-                self._n_updates += 1
+                    active_ratio = self.mask.sum().item() / self.mask.size().numel()
+                    if get_option("log_during_train"):
+                        logging.info(
+                            f"[Prune{self.name if self.name == '' else f' @ {self.name}'}] [Step {self._n_updates.item()}] active {active_ratio:.02f}, pruned {1 - active_ratio:.02f}, window_size = {len(self.window)}"
+                        )
+                    if len(self.window) < self.window_size:
+                        warnings.warn(
+                            f"window is not full when pruning, this will cause performance degradation! (window has {len(self.window)} elements while window_size parameter is {self.window_size})"
+                        )
+                    if not should_prune(self._n_updates + 1):
+                        # proactively free up memory
+                        self.window.clear()
+        if self.training:
+            self._n_updates += 1
 
         if self.strict or self.training:
             return x * self.mask.expand(x.shape)

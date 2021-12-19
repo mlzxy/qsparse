@@ -185,7 +185,6 @@ class QuantizeLayer(nn.Module):
         self._collapse = collapse
         self.decimal_range = decimal_range
         self.saturate_range = saturate_range
-        self.is_tracing = False
 
         for k in ["decimal", "_n_updates", "bits", "_quantized"]:
             self.register_parameter(
@@ -209,7 +208,7 @@ class QuantizeLayer(nn.Module):
         Returns:
             torch.Tensor: quantized tensor
         """
-        if not self.is_tracing and not self.initted:
+        if not self.initted:
             self.decimal = nn.Parameter(
                 torch.ones(1 if self.channelwise < 0 else x.shape[self.channelwise]).to(
                     x.device
@@ -229,84 +228,83 @@ class QuantizeLayer(nn.Module):
                 requires_grad=False,
             )
 
-        if not self.is_tracing:
-            if (
-                (self.timeout - self.window_size) < self._n_updates <= self.timeout
-            ):  # only collecting when needed to speedup
-                if self._collapse >= 0:
-                    for t in (
-                        x[nd_slice(len(x.shape), self._collapse, end=self.window_size)]
-                        .detach()
-                        .split(1)
-                    ):  # type: torch.Tensor
-                        self.window.append(t.to("cpu"))
-                else:
-                    self.window.append(x.detach().to("cpu"))
+        if (
+            (self.timeout - self.window_size) < self._n_updates <= self.timeout
+        ):  # only collecting when needed to speedup
+            if self._collapse >= 0:
+                for t in (
+                    x[nd_slice(len(x.shape), self._collapse, end=self.window_size)]
+                    .detach()
+                    .split(1)
+                ):  # type: torch.Tensor
+                    self.window.append(t.to("cpu"))
             else:
-                if self.interval <= 0:
-                    self.window.clear()
+                self.window.append(x.detach().to("cpu"))
+        else:
+            if self.interval <= 0:
+                self.window.clear()
 
-            # add window size check to avoid quantize a layer which always set to eval
-            if (self.training or (not self._quantized)) and (len(self.window) > 0):
-                if (self._n_updates == self.timeout and not self._quantized) or (
-                    self._n_updates > self.timeout
-                    and ((self._n_updates - self.timeout) % self.interval) == 0
-                    and self.interval > 0
-                ):
-                    if len(self.window) < self.window_size:
-                        warnings.warn(
-                            f"window is not full when quantization, this will cause performance degradation! (window has {len(self.window)} elements while window_size parameter is {self.window_size})"
-                        )
-                    if self.channelwise >= 0:
-                        for i in range(x.shape[self.channelwise]):
-                            n = arg_decimal_min_mse(
-                                torch.cat(
-                                    [
-                                        a[
-                                            tuple(
-                                                [
-                                                    slice(0, cs)
-                                                    if ci != self.channelwise
-                                                    else i
-                                                    for ci, cs in enumerate(x.shape)
-                                                ]
-                                            )
-                                        ].reshape(-1)
-                                        for a in self.window
-                                    ],
-                                    dim=0,
-                                ),
-                                self.bits,
-                                self.decimal_range,
-                                self.saturate_range,
-                                self.callback,
-                            )
-                            self.decimal.data[i] = n
-                        if get_option("log_during_train"):
-                            logging.info(
-                                f"[Quantize{self.name if self.name == '' else f' @ {self.name}'}] (channelwise) avg decimal = {self.decimal.float().mean().item()}"
-                            )
-                    else:
+        # add window size check to avoid quantize a layer which always set to eval
+        if (self.training or (not self._quantized)) and (len(self.window) > 0):
+            if (self._n_updates == self.timeout and not self._quantized) or (
+                self._n_updates > self.timeout
+                and ((self._n_updates - self.timeout) % self.interval) == 0
+                and self.interval > 0
+            ):
+                if len(self.window) < self.window_size:
+                    warnings.warn(
+                        f"window is not full when quantization, this will cause performance degradation! (window has {len(self.window)} elements while window_size parameter is {self.window_size})"
+                    )
+                if self.channelwise >= 0:
+                    for i in range(x.shape[self.channelwise]):
                         n = arg_decimal_min_mse(
-                            torch.cat([a.reshape(-1) for a in self.window], dim=0),
+                            torch.cat(
+                                [
+                                    a[
+                                        tuple(
+                                            [
+                                                slice(0, cs)
+                                                if ci != self.channelwise
+                                                else i
+                                                for ci, cs in enumerate(x.shape)
+                                            ]
+                                        )
+                                    ].reshape(-1)
+                                    for a in self.window
+                                ],
+                                dim=0,
+                            ),
                             self.bits,
                             self.decimal_range,
                             self.saturate_range,
                             self.callback,
                         )
-                        if get_option("log_during_train"):
-                            logging.info(
-                                f"[Quantize{self.name if self.name == '' else f' @ {self.name}'}] decimal = {n}"
-                            )
-                        self.decimal.data[:] = n
+                        self.decimal.data[i] = n
+                    if get_option("log_during_train"):
+                        logging.info(
+                            f"[Quantize{self.name if self.name == '' else f' @ {self.name}'}] (channelwise) avg decimal = {self.decimal.float().mean().item()}"
+                        )
+                else:
+                    n = arg_decimal_min_mse(
+                        torch.cat([a.reshape(-1) for a in self.window], dim=0),
+                        self.bits,
+                        self.decimal_range,
+                        self.saturate_range,
+                        self.callback,
+                    )
+                    if get_option("log_during_train"):
+                        logging.info(
+                            f"[Quantize{self.name if self.name == '' else f' @ {self.name}'}] decimal = {n}"
+                        )
+                    self.decimal.data[:] = n
 
-                    self._quantized[0] = True
+                self._quantized[0] = True
 
-                    # proactively free up memory
-                    if self.interval <= 0:
-                        self.window.clear()
+                # proactively free up memory
+                if self.interval <= 0:
+                    self.window.clear()
 
-        if self.is_tracing or self._quantized:
+        if self._quantized:
             out = self.callback(x, self.bits, self.decimal, self.channelwise)
         else:
             out = x
