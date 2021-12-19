@@ -64,7 +64,17 @@ def convert(  # noqa: C901
             return m.__name__
 
     def is_container(m: nn.Module) -> bool:
-        return len(m._modules) > 0
+        if len(m._modules) == 0:
+            return False
+        else:
+            for k in [
+                "quantize",
+                "prune",
+                "quantize_bias",
+            ]:  # a leaf module injected with qsparse layers
+                if hasattr(m, k):
+                    return False
+            return True
 
     def apply_operator(layer: Optional[nn.Module] = None) -> nn.Module:
         if layer is not None:

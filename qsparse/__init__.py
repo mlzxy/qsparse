@@ -25,4 +25,4 @@ __all__ = (
     "fuse_bn",
 )
 
-__version__ = "1.2.5"
+__version__ = "1.2.6"
