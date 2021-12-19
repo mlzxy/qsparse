@@ -63,6 +63,9 @@ def convert(  # noqa: C901
         else:
             return m.__name__
 
+    def is_container(m: nn.Module) -> bool:
+        return len(m._modules) > 0
+
     def apply_operator(layer: Optional[nn.Module] = None) -> nn.Module:
         if layer is not None:
             if isinstance(operator, QuantizeLayer):
@@ -124,7 +127,7 @@ def convert(  # noqa: C901
         reassign = {}
         for name, m in mod.named_children():
             modified = False
-            if not isinstance(m, nn.Sequential):
+            if not is_container(m):
                 if mstr(m) in weight_counter:
                     if (
                         weight_counter[mstr(m)]
@@ -149,7 +152,7 @@ def convert(  # noqa: C901
         reassign = {}
         for name, m in mod.named_children():
             origin_m = m
-            if (not isinstance(m, nn.Sequential)) or hasattr(m, "_qsparse_conversion"):
+            if (not is_container(m)) or hasattr(m, "_qsparse_conversion"):
                 if mstr(m) in activation_counter:
                     if (
                         activation_counter[mstr(m)]

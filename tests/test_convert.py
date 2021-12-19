@@ -63,58 +63,7 @@ def test_lenet_convert():
         input=True,  # input layer is quantized
     )
 
-    gt = """Sequential(
-  (0): QuantizeLayer()
-  (1): LeNet(
-    (conv1): Sequential(
-      (0): Conv2d(
-        3, 6, kernel_size=(5, 5), stride=(1, 1)
-        (quantize): QuantizeLayer()
-      )
-      (1): QuantizeLayer()
-    )
-    (conv2): Sequential(
-      (0): Sequential(
-        (0): Conv2d(
-          6, 16, kernel_size=(5, 5), stride=(1, 1)
-          (prune): PruneLayer()
-          (quantize): QuantizeLayer()
-        )
-        (1): PruneLayer()
-      )
-      (1): QuantizeLayer()
-    )
-    (fc1): Sequential(
-      (0): Sequential(
-        (0): Linear(
-          in_features=400, out_features=120, bias=True
-          (prune): PruneLayer()
-          (quantize): QuantizeLayer()
-        )
-        (1): PruneLayer()
-      )
-      (1): QuantizeLayer()
-    )
-    (fc2): Sequential(
-      (0): Sequential(
-        (0): Linear(
-          in_features=120, out_features=84, bias=True
-          (prune): PruneLayer()
-          (quantize): QuantizeLayer()
-        )
-        (1): PruneLayer()
-      )
-      (1): QuantizeLayer()
-    )
-    (fc3): Sequential(
-      (0): Linear(
-        in_features=84, out_features=10, bias=True
-        (quantize): QuantizeLayer()
-      )
-      (1): QuantizeLayer()
-    )
-  )
-)"""
+    gt = "Sequential(\n  (0): QuantizeLayer()\n  (1): LeNet(\n    (conv1): Conv2d(\n      3, 6, kernel_size=(5, 5), stride=(1, 1)\n      (quantize): QuantizeLayer()\n    )\n    (conv2): Conv2d(\n      6, 16, kernel_size=(5, 5), stride=(1, 1)\n      (prune): PruneLayer()\n    )\n    (fc1): Linear(\n      in_features=400, out_features=120, bias=True\n      (prune): PruneLayer()\n    )\n    (fc2): Linear(\n      in_features=120, out_features=84, bias=True\n      (prune): PruneLayer()\n    )\n    (fc3): Sequential(\n      (0): Sequential(\n        (0): Linear(\n          in_features=84, out_features=10, bias=True\n          (quantize): QuantizeLayer()\n        )\n        (1): PruneLayer()\n      )\n      (1): QuantizeLayer()\n    )\n  )\n)"
     assert str(lenet_pruned_quantized) == gt
 
 
