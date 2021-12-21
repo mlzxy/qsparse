@@ -188,14 +188,15 @@ def convert(  # noqa: C901
     def apply_to_input(mod):
         return nn.Sequential(apply_operator(), mod)
 
-    model = _convert_weight(nn_module(model))
-    model = _convert_activation(nn_module(model))
-    if input:
-        _model = apply_to_input(nn_module(model))
-        if model == nn_module(model):
-            model = _model
-        else:
-            model.module = _model
-
-    model = auto_name_prune_quantize_layers(model)
+    if model == nn_module(model):
+        model = _convert_weight(model)
+        model = _convert_activation(model)
+        if input:
+            model = apply_to_input(model)
+    else:
+        model.module = _convert_weight(model.module)
+        model.module = _convert_activation(model.module)
+        if input:
+            model.module = apply_to_input(model.module)
+    auto_name_prune_quantize_layers(nn_module(model))
     return model
