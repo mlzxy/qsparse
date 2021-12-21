@@ -94,7 +94,7 @@ def convert(  # noqa: C901
         def _count_occurrence(m: nn.Module, layer_type):
             total = 0
             for _, layer in m.named_children():
-                if not isinstance(layer, nn.Sequential):
+                if not is_container(layer):
                     if mstr(layer) == mstr(layer_type):
                         total += 1
                 else:
