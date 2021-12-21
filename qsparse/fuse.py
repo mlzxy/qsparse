@@ -79,7 +79,7 @@ def fuse_bn(  # noqa: C901
     layers: Iterable[str] = ["Conv2d", "Linear", "ConvTranspose2d"],
     handlers: Optional[Mapping[str, BNFuser]] = None,
     log: bool = True,
-    inplace: bool = False,
+    inplace: bool = True,
 ) -> nn.Module:
     """Fuse the batch norm layers back to the previous conv/deconv/linear layers in a newtwork.
 

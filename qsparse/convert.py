@@ -15,7 +15,7 @@ from qsparse.util import auto_name_prune_quantize_layers, nn_module
 def convert(  # noqa: C901
     model: nn.Module,
     operator: Union[PruneLayer, QuantizeLayer],
-    inplace: bool = False,
+    inplace: bool = True,
     weight_layers: Sequence[Type[nn.Module]] = [],
     activation_layers: Sequence[Type[nn.Module]] = [],
     input: bool = False,
