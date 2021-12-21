@@ -37,7 +37,7 @@ def unstructured_uniform_prune_callback(
     assert len(inp) >= 1, "no input tensor is provided"
     shape = inp[0].shape
     if current_mask is not None:
-        cur_sparsity = current_mask.sum().item() / current_mask.numel()
+        cur_sparsity = (~current_mask).sum().item() / current_mask.numel()
         mask = current_mask.to("cpu")
     else:
         mask = torch.ones(*shape, dtype=torch.bool)
