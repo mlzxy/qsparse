@@ -125,3 +125,18 @@ def test_integer_arithmetic():
         output_float.detach().numpy() - (output_int.float() / 2 ** no).detach().numpy()
     )
     assert np.all(diff == 0), "shall be able to fully match with integer arithmetic"
+
+
+def test_non_channelwise():
+    timeout = 5
+    data = torch.rand((1, 10, 32, 32))
+
+    qconv = quantize(
+        torch.nn.Conv2d(10, 30, 3), bits=8, bias_bits=8, timeout=timeout, channelwise=-1
+    )
+    qconv.train()
+    for _ in range(timeout + 1):
+        qconv(data)
+
+    assert qconv.quantize.decimal.shape.numel() == 1
+    assert qconv.quantize_bias.decimal.shape.numel() == 1

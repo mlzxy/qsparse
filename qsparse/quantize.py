@@ -371,7 +371,7 @@ def quantize(
         else:
             return QuantizeLayer(
                 bits=bias_bits if is_bias else bits,
-                channelwise=0 if is_bias else channelwise,
+                channelwise=(0 if channelwise >= 0 else -1) if is_bias else channelwise,
                 decimal_range=decimal_range,
                 saturate_range=saturate_range,
                 timeout=int(timeout),
