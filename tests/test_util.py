@@ -1,17 +1,15 @@
+# fmt: off
 import logging
 
 import numpy as np
 import torch
 import torch.nn as nn
 
-from qsparse import (
-    auto_name_prune_quantize_layers,
-    get_qsparse_option,
-    prune,
-    quantize,
-    set_qsparse_options,
-)
+from qsparse import (auto_name_prune_quantize_layers, get_qsparse_option,
+                     prune, quantize, set_qsparse_options)
 from qsparse.quantize import approx_quantile
+
+# fmt: on
 
 
 def test_auto_name_prune_quantize_layers():

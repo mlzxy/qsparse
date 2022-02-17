@@ -12,6 +12,15 @@ from qsparse.sparse import PruneLayer, prune
 from qsparse.util import auto_name_prune_quantize_layers, nn_module
 
 
+def copy_callback_on_demand(kwargs: Mapping) -> Mapping:
+    if kwargs.get("callback", None) is not None and isinstance(
+        kwargs["callback"], nn.Module
+    ):
+        return {**kwargs, "callback": copy.deepcopy(kwargs["callback"])}
+    else:
+        return kwargs
+
+
 def convert(  # noqa: C901
     model: nn.Module,
     operator: Union[PruneLayer, QuantizeLayer],
@@ -79,9 +88,10 @@ def convert(  # noqa: C901
     def apply_operator(layer: Optional[nn.Module] = None) -> nn.Module:
         if layer is not None:
             if isinstance(operator, QuantizeLayer):
-                return quantize(layer, **operator._kwargs)
+
+                return quantize(layer, **copy_callback_on_demand(operator._kwargs))
             else:
-                return prune(layer, **operator._kwargs)
+                return prune(layer, **copy_callback_on_demand(operator._kwargs))
         else:
             return copy.deepcopy(operator)
 

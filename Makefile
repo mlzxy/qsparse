@@ -1,8 +1,6 @@
 SHELL := /bin/bash
 format:
-	autoflake -r -i qsparse tests
 	isort qsparse tests
-	black qsparse tests setup.py
 
 style-check:
 	black --diff --check .

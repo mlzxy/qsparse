@@ -1,13 +1,13 @@
+# fmt: off
 import numpy as np
 import pytest
 import torch
 
-from qsparse import (
-    prune,
-    structured_prune_callback,
-    unstructured_prune_callback,
-    unstructured_uniform_prune_callback,
-)
+from qsparse import (prune, structured_prune_callback,
+                     unstructured_prune_callback,
+                     unstructured_uniform_prune_callback)
+
+# fmt: on
 
 
 def test_feature():
