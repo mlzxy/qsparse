@@ -1,3 +1,4 @@
+# fmt: off
 import numpy as np
 import pytest
 import torch
@@ -5,7 +6,11 @@ import torch.autograd as autograd
 import torch.nn.functional as F
 
 from qsparse import quantize
-from qsparse.quantize import DecimalOptimizer, linear_quantize_callback
+from qsparse.quantize import (DecimalOptimizer, ScalerOptimizer,
+                              linear_quantize_callback,
+                              scaler_quantize_callback)
+
+# fmt: on
 
 
 def test_feature():
@@ -84,6 +89,10 @@ def test_callback():
     qdata = linear_quantize_callback(data, bits=8, decimal=7)
     assert np.allclose(data.numpy(), qdata.numpy(), atol=1 / 2 ** 7)
 
+    data = torch.rand(10, 3, 32, 32)
+    qdata = scaler_quantize_callback(data, bits=8, scaler=0.01)
+    assert np.allclose(data.numpy(), qdata.numpy(), atol=1 / 2 ** 7)
+
     # vector quantization
     for i in range(1, 4):
         decimals = torch.randint(1, 7, (data.shape[i],))
@@ -99,6 +108,17 @@ def test_callback():
                 data[indices].numpy(),
                 qdata[indices].numpy(),
                 atol=1 / 2 ** decimals[j].item(),
+            )
+
+        scaler = torch.rand(data.shape[i]) + 1 / 128
+        qdata = scaler_quantize_callback(data, bits=8, scaler=scaler, channel_index=i)
+        for j in range(data.shape[i]):
+            indices = [
+                slice(None),
+            ] * 4
+            indices[i] = j
+            assert np.allclose(
+                data[indices].numpy(), qdata[indices].numpy(), atol=scaler[j].item()
             )
 
 
@@ -148,9 +168,30 @@ def test_non_channelwise():
 
 
 def test_scaler_quantization():
-    # TODO
-    # 1. test scaler callback (computation)
-    # 2. test backward grad (identity)
-    # 3. test quantization error reduce (when flags are set)
-    # 4. test optimizer cost reduce
-    pass
+    inp = torch.rand(3, 24, 24, requires_grad=True)
+    out = scaler_quantize_callback(inp, backward_passthrough=True)
+    out_grad = torch.rand(3, 24, 24) * 10000
+    out.backward(gradient=out_grad)
+    assert np.allclose(inp.grad.numpy(), out_grad.numpy())
+
+    inp = torch.rand(3, 24, 24, requires_grad=True)
+    out = linear_quantize_callback(inp, backward_passthrough=True)
+    out_grad = torch.rand(3, 24, 24) * 10000
+    out.backward(gradient=out_grad)
+    assert np.allclose(inp.grad.numpy(), out_grad.numpy())
+
+    inp = torch.rand(3, 24, 24, requires_grad=True) * 100
+    out_uintq = scaler_quantize_callback(inp, use_uint=True)
+    out_q = scaler_quantize_callback(inp, use_uint=False)
+    assert ((inp - out_uintq) ** 2).sum().item() < ((inp - out_q) ** 2).sum().item()
+
+    out_uintq = scaler_quantize_callback(inp, flip_axis=True)
+    out_q = scaler_quantize_callback(inp, flip_axis=False)
+    assert ((inp - out_uintq) ** 2).sum().item() < ((inp - out_q) ** 2).sum().item()
+
+    inp = torch.rand(3, 24, 24, requires_grad=True)
+    out_q = scaler_quantize_callback(inp, 8)
+    opt = ScalerOptimizer()
+    best_scaler = opt(inp, 8, 0.1, scaler_quantize_callback)
+    out_q_opt = scaler_quantize_callback(inp, 8, best_scaler)
+    assert ((inp - out_q_opt) ** 2).sum().item() < ((inp - out_q) ** 2).sum().item()

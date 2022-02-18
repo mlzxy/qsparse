@@ -189,7 +189,7 @@ def test_bandit_pruning():
     mask = torch.ones(shape)
     layer = BanditPruningCallback(collapse_batch_dim=False)
 
-    for _ in range(1000):
+    for _ in range(1500):
         inp = torch.normal(mean, 1)
         inp.requires_grad = True
         out = layer(inp, 0.5, mask)

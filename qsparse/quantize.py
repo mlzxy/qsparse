@@ -275,19 +275,15 @@ class ScalerOptimizer:
 
     def __init__(
         self,
-        decimal_range: Tuple[int, int] = (0, 20),
         saturate_range: Tuple[float, float] = (0, 1),
     ):
         """
         Args:
-            decimal_range (Tuple[int, int], optional): search range of fractional bits. Defaults to (0, 20).
             saturate_range (Tuple[float, float], optional): quantiles used to clamp the input tensor before searching decimal bits. Defaults to (0, 1).
         """
-        assert len(decimal_range) == 2
         assert (
             0 <= saturate_range[0] <= saturate_range[1] <= 1
         ), f"illegal saturate_range {saturate_range}"
-        self.decimal_range = decimal_range
         self.saturate_range = saturate_range
 
     def __call__(
