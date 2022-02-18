@@ -1,5 +1,6 @@
 # fmt: off
 import logging
+import uuid
 
 import numpy as np
 import torch
@@ -42,10 +43,11 @@ def test_approx_quantile():
 
 
 def test_option(capsys):
+    fpath = f"/tmp/log.{uuid.uuid4()}.txt"
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(message)s",
-        handlers=[logging.StreamHandler()],
+        handlers=[logging.FileHandler(fpath)],
     )
 
     set_qsparse_options()
@@ -53,9 +55,12 @@ def test_option(capsys):
     assert get_qsparse_option("log_on_created") is False
     prune(sparsity=0.5)
     quantize(bits=8)
-    captured = capsys.readouterr()
-    assert "[Prune]" not in captured.out
-    assert "[Quantize]" not in captured.out
+    logging.root.handlers[0].flush()
+    captured = open(fpath).read()
+    assert "[Prune]" not in captured
+    assert "[Quantize]" not in captured
+    with open(fpath, "w") as f:
+        f.write("")
 
     set_qsparse_options(log_during_train=False)
     assert get_qsparse_option("log_during_train") is False
@@ -64,6 +69,6 @@ def test_option(capsys):
     )
     for _ in range(20):
         layer(torch.rand(1, 10))
-    captured = capsys.readouterr()
-    assert "[Prune" not in captured.out
-    assert "[Quantize" not in captured.out
+    captured = open(fpath).read()
+    assert "[Prune" not in captured
+    assert "[Quantize" not in captured

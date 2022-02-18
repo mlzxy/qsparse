@@ -3,7 +3,8 @@ import pytest
 import torch
 import torch.nn.functional as F
 
-from qsparse import linear_quantize_callback, quantize
+from qsparse import quantize
+from qsparse.quantize import DecimalOptimizer, linear_quantize_callback
 
 
 def test_feature():
@@ -14,17 +15,20 @@ def test_feature():
         output = quantize_layer(data).numpy()
 
     output_ref = linear_quantize_callback(
-        data, bits=8, decimal=quantize_layer.decimal
+        data, bits=8, decimal=quantize_layer.weight
     ).numpy()
-    assert quantize_layer.decimal.item() == 6
+    assert quantize_layer.weight.item() == 6
     assert np.all(output == output_ref)
 
     saturate_quantize_layer = quantize(
-        bits=8, timeout=timeout, saturate_range=(0.3, 0.7), channelwise=-1
+        bits=8,
+        timeout=timeout,
+        optimizer=DecimalOptimizer(saturate_range=(0.3, 0.7)),
+        channelwise=-1,
     )
     for _ in range(timeout + 1):  # ensure the quantization has been triggered
         saturate_quantize_layer(data)
-    assert saturate_quantize_layer.decimal.item() == 7
+    assert saturate_quantize_layer.weight.item() == 7
 
 
 def test_weight():
@@ -38,14 +42,14 @@ def test_weight():
 
     assert (
         qconv.weight.detach().numpy()
-        - linear_quantize_callback(qconv.weight, 8, qconv.quantize.decimal)
+        - linear_quantize_callback(qconv.weight, 8, qconv.quantize.weight)
         .detach()
         .numpy()
     ).sum() == 0, "weight shall be fully quantized"
     assert (
         qconv.bias.detach().numpy()
         - linear_quantize_callback(
-            qconv.bias, 8, qconv.quantize_bias.decimal, channel_index=0
+            qconv.bias, 8, qconv.quantize_bias.weight, channel_index=0
         )
         .detach()
         .numpy()
@@ -64,7 +68,7 @@ def test_weight():
         qconv(data)
     assert (
         qconv.weight.detach().numpy()
-        - linear_quantize_callback(qconv.weight, 8, qconv.quantize.decimal)
+        - linear_quantize_callback(qconv.weight, 8, qconv.quantize.weight)
         .detach()
         .numpy()
     ).sum() != 0, "quantization schedule shall only be triggered during training"
@@ -114,11 +118,11 @@ def test_integer_arithmetic():
     output_float = linear_quantize_callback(qconv(input_float), 8, no)
 
     # quantized output in 8-bit integer
-    weight = qconv.weight * (2.0 ** qconv.quantize.decimal).view(-1, 1, 1, 1)
+    weight = qconv.weight * (2.0 ** qconv.quantize.weight).view(-1, 1, 1, 1)
     output_int = F.conv2d(input.int(), weight.int())
     for i in range(output_int.shape[1]):
         output_int[:, i] = (
-            output_int[:, i].float() / 2 ** (ni + qconv.quantize.decimal[i] - no)
+            output_int[:, i].float() / 2 ** (ni + qconv.quantize.weight[i] - no)
         ).int()
 
     diff = (
@@ -138,5 +142,5 @@ def test_non_channelwise():
     for _ in range(timeout + 1):
         qconv(data)
 
-    assert qconv.quantize.decimal.shape.numel() == 1
-    assert qconv.quantize_bias.decimal.shape.numel() == 1
+    assert qconv.quantize.weight.shape.numel() == 1
+    assert qconv.quantize_bias.weight.shape.numel() == 1

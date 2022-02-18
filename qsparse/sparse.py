@@ -1,7 +1,7 @@
-import logging
+import math
 import warnings
 from collections import deque
-from typing import Iterable, List, Union
+from typing import Iterable, List, Tuple, Union
 
 import numpy as np
 import torch
@@ -9,36 +9,30 @@ import torch.nn as nn
 
 from qsparse.common import PruneCallback
 from qsparse.imitation import imitate
-from qsparse.util import get_option, nd_slice
-
-__all__ = [
-    "prune",
-    "unstructured_prune_callback",
-    "structured_prune_callback",
-    "unstructured_uniform_prune_callback",
-]
+from qsparse.util import get_option, logging, nd_slice, wrap_tensor_with_list
 
 
 def unstructured_uniform_prune_callback(
-    inp: List[torch.Tensor], sparsity: float, current_mask: torch.Tensor = None
+    inp: List[torch.Tensor], sparsity: float, mask: torch.Tensor = None
 ) -> torch.Tensor:
     """unstructured uniform pruning function with type signature of [PruneCallback][qsparse.common.PruneCallback].
-    This function will prune uniformly without considering magnitude of the input tensors. If a current mask is provided,
-    this function will not reactivate those already pruned locations in current mask.
+    This function will prune uniformly without considering magnitude of the input tensors. If a init mask is provided,
+    this function will not reactivate those already pruned locations in init mask.
 
     Args:
         inp (List[torch.Tensor]): input tensor list (see more in [PruneCallback][qsparse.common.PruneCallback])
         sparsity (float): target sparsity
-        current_mask (torch.Tensor, optional): current mask of the pruning procedure. Defaults to None.
+        mask (torch.Tensor, optional): init mask of the pruning procedure. Defaults to None.
 
     Returns:
         torch.Tensor: binary mask
     """
+    inp = wrap_tensor_with_list(inp)
     assert len(inp) >= 1, "no input tensor is provided"
     shape = inp[0].shape
-    if current_mask is not None:
-        cur_sparsity = (~current_mask).sum().item() / current_mask.numel()
-        mask = current_mask.to("cpu")
+    if mask is not None:
+        cur_sparsity = (~mask).sum().item() / mask.numel()
+        mask = mask.to("cpu")
     else:
         mask = torch.ones(*shape, dtype=torch.bool)
         cur_sparsity = 0
@@ -53,18 +47,19 @@ def unstructured_uniform_prune_callback(
 
 
 def unstructured_prune_callback(
-    inp: List[torch.Tensor], sparsity: float, current_mask: torch.Tensor = None
+    inp: List[torch.Tensor], sparsity: float, mask: torch.Tensor = None
 ) -> torch.Tensor:
     """unstructured pruning function with type signature of [PruneCallback][qsparse.common.PruneCallback].
 
     Args:
         inp (List[torch.Tensor]): input tensor list (see more in [PruneCallback][qsparse.common.PruneCallback])
         sparsity (float): target sparsity
-        current_mask (torch.Tensor, optional): current mask of the pruning procedure. Defaults to None.
+        mask (torch.Tensor, optional): init mask of the pruning procedure. Defaults to None.
 
     Returns:
         torch.Tensor: binary mask
     """
+    inp = wrap_tensor_with_list(inp)
     inp = torch.cat([v.view(1, *v.shape) for v in inp], dim=0)
     saliency = inp.abs().mean(dim=0)
     values = saliency.flatten().sort()[0]
@@ -76,7 +71,10 @@ def unstructured_prune_callback(
 
 
 def structured_prune_callback(
-    inp: List[torch.Tensor], sparsity: float, prunable: Union[Iterable[int], int] = {0}
+    inp: List[torch.Tensor],
+    sparsity: float,
+    mask: torch.Tensor = None,
+    prunable: Union[Iterable[int], int] = {0},
 ) -> torch.Tensor:
     """structured pruning function with type signature of [PruneCallback][qsparse.common.PruneCallback].
 
@@ -84,11 +82,12 @@ def structured_prune_callback(
         inp (List[torch.Tensor]): input tensor list (see more in [PruneCallback][qsparse.common.PruneCallback])
         sparsity (float): target sparsity
         prunable (Union[Iterable[int], int], optional): dimension indexes that are prunable. Defaults to {0}, which corresponds to channel dimension when batch dimension is not present.
+        mask (torch.Tensor, optional): init mask of the pruning procedure. Defaults to None.
 
     Returns:
         torch.Tensor: binary mask
     """
-
+    inp = wrap_tensor_with_list(inp)
     prunables = {prunable} if isinstance(prunable, int) else prunable
     saliency_lst = []
     for saliency in inp:
@@ -103,6 +102,181 @@ def structured_prune_callback(
     threshold = values[idx]
     mask = saliency >= threshold
     return mask
+
+
+class BanditPruning(torch.autograd.Function):
+    """Pruning method based on multi-arm bandits"""
+
+    @staticmethod
+    def forward(
+        ctx,
+        inp: torch.Tensor,
+        sparsity: float,
+        mask_shape: Tuple[int],
+        cumsum: torch.Tensor,  # initialized as all zeros
+        cumsum_square: torch.Tensor,  # initialized as all zeros
+        count: torch.Tensor,  # initialize as all zeros
+        t: torch.Tensor,  # total number of experiments, t/0.8 => real T
+        normalizer: torch.Tensor,  # use to normalize gradient distribution
+        collapse_index: int,
+        deterministic: bool,
+        mask_out: torch.Tensor,
+    ) -> torch.Tensor:
+        """Forward pass for bandit-based pruning algorithm
+
+        Args:
+            ctx: pytorch context
+            inp (torch.Tensor): input tensor to be pruned
+            sparsity (float): target sparsity ratio
+            mask_shape (Tuple[int]): shape of the output mask
+            cumsum (torch.Tensor): cumulative sum of the cost for each arm / neuron
+            deterministic (bool): whether run in a deterministic mode, True will disable bandit parameters updates
+            mask_out (torch.Tensor): output binary mask
+
+        Returns:
+            torch.Tensor: pruned input
+        """
+
+        ctx.sparsity = sparsity
+        ctx.deterministic = deterministic
+        ctx.collapse_index = collapse_index
+
+        dim = cumsum.numel()
+        m = int(sparsity * dim)
+
+        # UCBVTune Iteration Equation
+        safe_count = count + 0.0001
+        mean = cumsum / safe_count
+        variance = (cumsum_square / safe_count) - mean ** 2
+        if t.item() == 0:
+            T = t + 1
+        else:
+            T = (t + 0.0001) / sparsity
+        variance += torch.sqrt(2.0 * torch.log(T) / safe_count)
+        lower_conf_costs = mean - torch.sqrt(torch.log(T) * variance / safe_count)
+        lower_conf_costs[count < 1] = -float("inf")
+
+        # select the topk
+        indexes = torch.topk(lower_conf_costs, m, largest=False).indices
+        mask = torch.ones(dim, device=inp.device, dtype=torch.bool)
+        mask[indexes] = 0  # top m -> pruned
+        mask = mask.view(mask_shape)
+        if deterministic:
+            ctx.save_for_backward(mask)
+            mask_out.data[:] = mask
+        else:
+            ctx.save_for_backward(
+                mask, indexes, cumsum, cumsum_square, count, t, normalizer
+            )
+        return inp * mask.expand(inp.shape)
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        if ctx.deterministic:
+            mask = ctx.saved_tensors[0]
+        else:
+            (
+                mask,
+                indexes,
+                cumsum,
+                cumsum_square,
+                count,
+                t,
+                normalizer,
+            ) = ctx.saved_tensors
+
+            grad = grad_output.abs()
+            if ctx.collapse_index >= 0:
+                grad = grad.mean(ctx.collapse_index)
+            costs = grad.view(-1)[indexes]
+
+            if normalizer.item() <= 0:  # set one time
+                normalizer.data[:] = costs.quantile(0.95)
+
+            costs /= normalizer
+
+            # update bandit parameters
+            count[indexes] += 1
+            t.data += 1
+            cumsum[indexes] += costs
+            cumsum_square[indexes] += costs ** 2
+        result = grad_output * mask.expand(grad_output.shape)
+        return (result,) + (None,) * 10
+
+
+class BanditPruningCallback(nn.Module):
+    def __init__(self, exploration_steps: int, collapse_batch_dim: bool = True):
+        """Callback to prune the network based on multi-arm bandits algorithms (UCBVTuned is used here)
+
+        Args:
+            exploration_steps (int): How many steps used for bandit learning
+            collapse_batch_dim (bool, optional): whether treat the first dimension as batch dimension. Defaults to True.
+        """
+        self.exploration_steps = exploration_steps
+        self._collapse = 0 if collapse_batch_dim else -1
+        self.mask_shape = None
+
+        for k in [
+            "cumsum",
+            "cumsum_square",
+            "t",
+            "count",
+            "normalizer",
+        ]:
+            self.register_parameter(
+                k,
+                nn.Parameter(
+                    torch.tensor(-1, dtype=torch.int), requires_grad=False
+                ),  # placeholder
+            )
+
+    @property
+    def initted(self) -> bool:
+        """whether the parameters of the prune layer are initialized."""
+        return self.t.item() != -1
+
+    def forward(self, x: torch.Tensor, sparsity: float, mask: torch.Tensor = None):
+        if not self.initted:
+            if self._collapse < 0:
+                self.mask_shape = tuple(x.shape)
+            else:
+                self.mask_shape = tuple(x.shape)[1:]
+
+            dim = math.prod(self.mask_shape)
+            self.normalizer = nn.Parameter(
+                torch.zeros(1).to(x.device), requires_grad=False
+            )
+            self.t = nn.Parameter(torch.zeros(1).to(x.device), requires_grad=False)
+            self.count = nn.Parameter(
+                torch.zeros(dim).to(x.device), requires_grad=False
+            )
+            self.cumsum = nn.Parameter(
+                torch.zeros(dim).to(x.device), requires_grad=False
+            )
+            self.cumsum_square = nn.Parameter(
+                torch.zeros(dim).to(x.device), requires_grad=False
+            )
+
+        if mask is None:
+            return torch.zeros(self.mask_shape)
+
+        deterministic = (not self.training) or (self.t.item() >= self.exploration_steps)
+        out = BanditPruning.apply(
+            x,
+            sparsity,
+            self.mask_shape,
+            self.cumsum,
+            self.cumsum_square,
+            self.count,
+            self.t,
+            self.normalizer,
+            self._collapse,  # parameters
+            deterministic,
+            self.mask,
+        )
+        if self.training:
+            self.t.data += 1
+        return out
 
 
 class PruneLayer(nn.Module):
@@ -121,7 +295,9 @@ class PruneLayer(nn.Module):
         window_size: int = 1,
         strict: bool = True,
         # for customization
+        mask_refresh_interval: float = -1,
         callback: PruneCallback = unstructured_prune_callback,
+        callback_prune_input: bool = False,
         collapse: int = 0,
         # for debug purpose
         name="",
@@ -131,10 +307,13 @@ class PruneLayer(nn.Module):
             logging.info(
                 f"[Prune{name if name == '' else f' @ {name}'}] start = {start} interval = {interval} repetition = {repetition} sparsity = {sparsity} window_size = {window_size} collapse = {collapse} "
             )
-        self.schedules = [start + interval * (1 + i) for i in range(repetition)]
+        self.schedules = [start + interval * i for i in range(repetition)]
         self.window = deque(maxlen=window_size)
         self.start = start
         self.interval = interval
+        self.mask_refresh_interval = (
+            mask_refresh_interval if mask_refresh_interval > 0 else interval
+        )
         self.repetition = repetition
         self.sparsity = sparsity
         self.name = name
@@ -142,6 +321,7 @@ class PruneLayer(nn.Module):
         self.window_size = window_size
         self._collapse = collapse
         self.strict = strict
+        self.callback_prune_input = callback_prune_input
 
         for k in [
             "mask",
@@ -175,10 +355,13 @@ class PruneLayer(nn.Module):
         if not self.initted:
             assert len(x.shape) > 1
             with torch.no_grad():
-                m_example = self.callback(
-                    [x.detach() if self._collapse < 0 else x.mean(self._collapse)],
-                    0,
-                )
+                if self.callback_prune_input:
+                    m_example = self.callback(x, 0)
+                else:
+                    m_example = self.callback(
+                        x if self._collapse < 0 else x.mean(self._collapse),
+                        0,
+                    )
             self.mask = nn.Parameter(
                 torch.ones(*m_example.shape, dtype=torch.bool).to(x.device),
                 requires_grad=False,
@@ -191,45 +374,47 @@ class PruneLayer(nn.Module):
                 torch.zeros(1).to(x.device), requires_grad=False
             )
 
-        def should_prune(n):
-            cond = any([(0 <= (s - n) <= self.window_size) for s in self.schedules])
-            if self.strict:
-                return cond
-            else:
-                return cond and self.training
+        def should_update_sparsity():
+            t = self._n_updates.item()
+            return (t in self.schedules) and self.training
 
-        if should_prune(self._n_updates):
-            if self._collapse >= 0:
-                for t in (
-                    x[nd_slice(len(x.shape), self._collapse, end=self.window_size)]
-                    .abs()
-                    .detach()
-                    .split(1)
-                ):  # type: torch.Tensor
-                    self.window.append(t.squeeze(0).to("cpu"))
-            else:
-                self.window.append(x.abs().detach().to("cpu"))
+        def time_to_update_mask(offset=0):
+            t = self._n_updates.item() - self.start + offset
+            remaining_fraction = (
+                math.ceil(t / self.mask_refresh_interval)
+                - t / self.mask_refresh_interval
+            )
+            return int(self.mask_refresh_interval * remaining_fraction)
 
-        # add window size check to avoid prune a layer which always set to eval
-        if (
-            (self._n_updates > self.start)
-            and (self._cur_sparsity < self.sparsity)
-            and self.training
-            and len(self.window) > 0
-        ):
-            if ((self._n_updates - self.start) % self.interval) == 0:
-                ratio = (
-                    1.0
-                    - (self._n_updates.item() - self.start)
-                    / (self.interval * self.repetition)
-                ) ** 3
-                self._cur_sparsity[0] = self.sparsity * (1 - ratio)
+        if should_update_sparsity():
+            ratio = (
+                1.0
+                - (self._n_updates.item() - self.start + self.interval)
+                / (self.interval * self.repetition)
+            ) ** 3
+            self._cur_sparsity[0] = self.sparsity * (1 - ratio)
 
-                if self._cur_sparsity > 0:
+        if not self.callback_prune_input:
+            if self.training:
+                if (
+                    time_to_update_mask() < self.window_size
+                ):  # set `window_size` to 0 will disable windows
+                    if self._collapse >= 0:
+                        sl = nd_slice(
+                            len(x.shape), self._collapse, end=self.window_size
+                        )
+                        for t in x[sl].abs().detach().split(1):  # type: torch.Tensor
+                            self.window.append(t.squeeze(0).to("cpu"))
+                    else:
+                        self.window.append(x.abs().detach().to("cpu"))
+                else:
+                    self.window.clear()
+
+                if should_update_sparsity() or time_to_update_mask() == 0:
                     self.mask.data = self.callback(
                         self.window,
                         self._cur_sparsity.item(),
-                        current_mask=self.mask.data,
+                        mask=self.mask,
                     ).to(x.device)
 
                     active_ratio = self.mask.sum().item() / self.mask.size().numel()
@@ -237,42 +422,44 @@ class PruneLayer(nn.Module):
                         logging.info(
                             f"[Prune{self.name if self.name == '' else f' @ {self.name}'}] [Step {self._n_updates.item()}] active {active_ratio:.02f}, pruned {1 - active_ratio:.02f}, window_size = {len(self.window)}"
                         )
-                    if len(self.window) < self.window_size:
-                        warnings.warn(
-                            f"window is not full when pruning, this will cause performance degradation! (window has {len(self.window)} elements while window_size parameter is {self.window_size})"
-                        )
-                    if not should_prune(self._n_updates + 1):
-                        # proactively free up memory
+
+                    if time_to_update_mask(offset=1) > 0:  # proactively free up memory
                         self.window.clear()
+
+            if self.strict or self.training:
+                out = x * self.mask.expand(x.shape)
+            else:
+                mask = self.mask
+                if len(self.mask.shape) != len(x.shape):
+                    if len(self.mask.shape) == (len(x.shape) - 1):
+                        mask = mask.view(1, *mask.shape)
+                    else:
+                        raise RuntimeError(
+                            f"mask shape not matched: mask {mask.shape} vs input {x.shape}"
+                        )
+                target_shape = x.shape[1:]
+                final_mask = torch.ones(
+                    (1,) + target_shape, device=x.device, dtype=mask.dtype
+                )
+                repeats = [x.shape[i] // mask.shape[i] for i in range(1, len(x.shape))]
+                mask = mask.repeat(1, *repeats)
+                slices = [0] + [
+                    slice(
+                        (x.shape[i] - mask.shape[i]) // 2,
+                        (x.shape[i] - mask.shape[i]) // 2 + mask.shape[i],
+                    )
+                    for i in range(1, len(x.shape))
+                ]
+                final_mask[slices] = mask[0, :]
+                out = x * final_mask
+        else:
+            if self._n_updates >= self.start:
+                out = self.callback(x, self._cur_sparsity.item(), mask=self.mask)
+            else:
+                out = x
         if self.training:
             self._n_updates += 1
-
-        if self.strict or self.training:
-            return x * self.mask.expand(x.shape)
-        else:
-            mask = self.mask
-            if len(self.mask.shape) != len(x.shape):
-                if len(self.mask.shape) == (len(x.shape) - 1):
-                    mask = mask.view(1, *mask.shape)
-                else:
-                    raise RuntimeError(
-                        f"mask shape not matched: mask {mask.shape} vs input {x.shape}"
-                    )
-            target_shape = x.shape[1:]
-            final_mask = torch.ones(
-                (1,) + target_shape, device=x.device, dtype=mask.dtype
-            )
-            repeats = [x.shape[i] // mask.shape[i] for i in range(1, len(x.shape))]
-            mask = mask.repeat(1, *repeats)
-            slices = [0] + [
-                slice(
-                    (x.shape[i] - mask.shape[i]) // 2,
-                    (x.shape[i] - mask.shape[i]) // 2 + mask.shape[i],
-                )
-                for i in range(1, len(x.shape))
-            ]
-            final_mask[slices] = mask[0, :]
-            return x * final_mask
+        return out
 
 
 def prune(
@@ -285,8 +472,10 @@ def prune(
     window_size: int = 1,
     strict: bool = True,
     collapse: Union[str, int] = "auto",
+    mask_refresh_interval: int = -1,
     # for customization
     callback: PruneCallback = unstructured_prune_callback,
+    callback_prune_input: bool = False,
     # for debug purpose
     name="",
 ) -> nn.Module:
@@ -298,18 +487,25 @@ def prune(
         inp (nn.Module, optional): input module whose weight is to be pruned. Defaults to None.
         sparsity (float, optional): target sparsity. Defaults to 0.5.
         start (int, optional): starting step to apply pruning. Defaults to 1000.
-        interval (int, optional): interval of steps between each pruning operation. Defaults to 1000.
-        repetition (int, optional): number of pruning operations. Defaults to 4.
+        interval (int, optional): interval of iterations between each sparsity increasing steps. Defaults to 1000.
+        repetition (int, optional): number of sparsity increasing steps. Defaults to 4.
         window_size (int, optional): number of input tensors used for computing the binary mask. Defaults to 1, means using only current input.
         strict (bool, optional): whether enforcing the shape of the binary mask to be equal to the input tensor. Defaults to True.
                                  When strict=False, it will try to expand the binary mask to matched the input tensor shape during evaluation, useful for tasks whose test images are larger, like super resolution.
         collapse (Union[str, int]): which dimension to ignore when creating binary mask. It is usually set to 0 for the batch dimension during pruning activations, and -1 when pruning weights. Default to "auto", means setting `collapse` automatically based on `inp` parameter.
-        callback (PruneCallback, optional): callback for actual operation of pruning tensor, used for customization. Defaults to [unstructured\_prune\_callback][qsparse.sparse.unstructured_prune_callback].
+        mask_refresh_interval (int, optional): interval of iterations between each mask refreshing. Default to -1, will be set to equal with `interval`.
+        callback (PruneCallback, optional): callback for actual operation of calculating pruning mask (mask refreshing), used for customization. Defaults to [unstructured\_prune\_callback][qsparse.sparse.unstructured_prune_callback].
+        callback_prune_input (bool, optional): whether the callback directly prunes input instead of creating the mask. Defaults to False.
         name (str, optional): name of the prune layer created, used for better logging. Defaults to "".
 
     Returns:
         nn.Module: input module with its weight pruned or a instance of [PruneLayer][qsparse.sparse.PruneLayer] for feature pruning
     """
+    if mask_refresh_interval <= 0:
+        mask_refresh_interval = interval
+
+    if callback_prune_input:
+        window_size = 0
 
     kwargs = dict(
         sparsity=sparsity,
@@ -317,9 +513,11 @@ def prune(
         interval=interval,
         repetition=repetition,
         window_size=window_size,
+        mask_refresh_interval=mask_refresh_interval,
         strict=strict,
         collapse=collapse,
         callback=callback,
+        callback_prune_input=callback_prune_input,
         name=name,
     )
 
@@ -332,6 +530,8 @@ def prune(
             interval=int(interval),
             repetition=repetition,
             window_size=window_size,
+            mask_refresh_interval=mask_refresh_interval,
+            callback_prune_input=callback_prune_input,
             name=name,
             strict=strict,
             callback=callback,

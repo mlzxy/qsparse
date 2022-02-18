@@ -1,4 +1,3 @@
-import logging
 from copy import copy, deepcopy
 from typing import Dict, Iterable, Mapping, Optional, Tuple
 
@@ -6,7 +5,7 @@ import torch
 import torch.nn as nn
 from typing_extensions import Protocol
 
-from qsparse.util import nn_module
+from qsparse.util import logging, nn_module
 
 
 class BNFuser(Protocol):

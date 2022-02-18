@@ -120,7 +120,7 @@ def test_callback():
         result_sparsity = (~mask).sum() / np.prod(mask.shape)
         assert np.isclose(sparsity, result_sparsity, atol=1 / np.prod(mask.shape))
     mask = unstructured_uniform_prune_callback(
-        [torch.rand(shape) for _ in range(10)], 0.7, current_mask=mask
+        [torch.rand(shape) for _ in range(10)], 0.7, mask=mask
     )
     result_sparsity = (~mask).sum() / np.prod(mask.shape)
     assert np.isclose(0.7, result_sparsity, atol=1 / np.prod(mask.shape))

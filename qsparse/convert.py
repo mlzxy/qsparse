@@ -1,5 +1,4 @@
 import copy
-import logging
 import warnings
 from collections import defaultdict
 from typing import Mapping, Optional, Sequence, Tuple, Type, Union
@@ -9,16 +8,14 @@ from torch.nn.modules.container import Sequential
 
 from qsparse.quantize import QuantizeLayer, quantize
 from qsparse.sparse import PruneLayer, prune
-from qsparse.util import auto_name_prune_quantize_layers, nn_module
+from qsparse.util import auto_name_prune_quantize_layers, logging, nn_module
 
 
-def copy_callback_on_demand(kwargs: Mapping) -> Mapping:
-    if kwargs.get("callback", None) is not None and isinstance(
-        kwargs["callback"], nn.Module
-    ):
-        return {**kwargs, "callback": copy.deepcopy(kwargs["callback"])}
-    else:
-        return kwargs
+def copy_nn_module_on_demand(kwargs: Mapping) -> Mapping:
+    return {
+        k: copy.deepcopy(v) if isinstance(v, nn.Module) else v
+        for k, v in kwargs.items()
+    }
 
 
 def convert(  # noqa: C901
@@ -89,9 +86,9 @@ def convert(  # noqa: C901
         if layer is not None:
             if isinstance(operator, QuantizeLayer):
 
-                return quantize(layer, **copy_callback_on_demand(operator._kwargs))
+                return quantize(layer, **copy_nn_module_on_demand(operator._kwargs))
             else:
-                return prune(layer, **copy_callback_on_demand(operator._kwargs))
+                return prune(layer, **copy_nn_module_on_demand(operator._kwargs))
         else:
             return copy.deepcopy(operator)
 

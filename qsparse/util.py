@@ -1,7 +1,10 @@
-from typing import List, Optional
+import logging as logging_module
+from typing import List, Optional, TypeVar
 
 import torch
 import torch.nn as nn
+
+T = TypeVar("T")
 
 _options_ = {"log_on_created": True, "log_during_train": True}
 
@@ -86,3 +89,32 @@ def nn_module(mod: nn.Module) -> nn.Module:
         return mod.module
     else:
         return mod
+
+
+def wrap_tensor_with_list(v: T) -> List[T]:
+    if isinstance(v, torch.Tensor):
+        return [v]
+    else:
+        return v
+
+
+def log_functor(name: str):
+    def log(msg: str):
+        root = logging_module.root
+        if root.hasHandlers():
+            getattr(root, name)(msg)
+        else:
+            print(msg)
+
+    return log
+
+
+class logging:
+    """wrapper of logging module. use `print` if logging module is not configured."""
+
+    info = log_functor("info")
+    warn = log_functor("warn")
+    warning = log_functor("warning")
+    error = log_functor("error")
+    exception = log_functor("exception")
+    debug = log_functor("debug")

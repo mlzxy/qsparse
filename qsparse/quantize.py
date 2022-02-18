@@ -1,19 +1,20 @@
-import logging
+# fmt: off
 import math
 import warnings
 from collections import deque
 from typing import Tuple
 
+import numpy as np
 import torch
 import torch.nn as nn
+from scipy import optimize
 
-from qsparse.common import QuantizeCallback, TensorOrInt, ensure_tensor
+from qsparse.common import (QuantizeCallback, QuantizeOptimizer, TensorOrFloat,
+                            TensorOrInt, ensure_tensor)
 from qsparse.imitation import imitate
-from qsparse.util import get_option, nd_slice
+from qsparse.util import get_option, logging, nd_slice
 
-__all__ = [
-    "quantize",
-]
+# fmt: on
 
 
 def approx_quantile(t: torch.Tensor, fraction: float, bound: int = 2 ** 24) -> float:
@@ -61,8 +62,13 @@ class LinearQuantization(torch.autograd.Function):
         bits: int = 8,
         decimal: TensorOrInt = 5,
         channel_index: int = 1,
+        use_uint: bool = False,
+        backward_passthrough: bool = False,
+        flip_axis: bool = False,
     ):
         """quantize the input tensor and prepare for backward computation."""
+        ctx.backward_passthrough = backward_passthrough
+        ctx.notch = 1 if flip_axis else 0
         limit = 2.0 ** (bits - 1)
         tof = 2.0 ** -decimal
         toi = 2.0 ** decimal
@@ -75,15 +81,27 @@ class LinearQuantization(torch.autograd.Function):
             tof, toi = tof.view(*shape), toi.view(*shape)
         ctx.save_for_backward(ensure_tensor(limit), ensure_tensor(tof))
         q = (input * toi).int()
-        q.clamp_(-limit, limit - 1)
+        if use_uint:
+            q.clamp_(0, 2 * limit - 1)
+        else:
+            q.clamp_(
+                -limit + ctx.notch,
+                limit - 1 + ctx.notch,
+            )
         return q.float() * tof
 
     @staticmethod
     def backward(ctx, grad_output):
         """gradient computation for quantization operation."""
         limit, tof = ctx.saved_tensors
-        v = grad_output.clamp_(-limit * tof, (limit - 1) * tof)
-        return (v, None, None, None, None)
+        if ctx.backward_passthrough:
+            v = grad_output
+        else:
+            v = grad_output.clamp_(
+                (-limit + ctx.notch) * tof,
+                (limit - 1 + ctx.notch) * tof,
+            )
+        return (v,) + (None,) * 6
 
 
 def linear_quantize_callback(
@@ -91,60 +109,224 @@ def linear_quantize_callback(
     bits: int = 8,
     decimal: TensorOrInt = 5,
     channel_index: int = 1,
+    use_uint: bool = False,
+    backward_passthrough: bool = False,
+    flip_axis: bool = False,
 ) -> torch.Tensor:
-    """quantization function with type signature of [QuantizeCallback][qsparse.common.QuantizeCallback].
+    """shift-based quantization function with type signature of [QuantizeCallback][qsparse.common.QuantizeCallback].
 
     Args:
         inp (torch.Tensor): input tensor
         bits (int, optional): bitwidth. Defaults to 8.
         decimal (TensorOrInt, optional): decimal bits, will be tensor of decimal bits for channel-wise quantization. Defaults to 5.
         channel_index (int, optional): dimension index for channel. Defaults to 1.
+        use_uint (bool, optional): whether to use uint to quantize (useful for ReLu activations). Defaults to False.
+        backward_passthrough (bool, optional): whether to just use `identity` function for backward pass. Defaults to False.
+        flip_axis (bool, optional): whether to quantize positive values with negative axis and vice versa. Examples: normal int8 quantization will cast input to `[-128, 127]`, but with axis flipped, the input will be mapped to `[-127, 128]`.  Defaults to False.
 
     Returns:
         torch.Tensor: quantized tensor
     """
-    return LinearQuantization.apply(inp, bits, decimal, channel_index)
+    return LinearQuantization.apply(
+        inp, bits, decimal, channel_index, use_uint, backward_passthrough, flip_axis
+    )
 
 
-def arg_decimal_min_mse(
-    tensor: torch.Tensor,
-    bits: int,
-    decimal_range: Tuple[int, int] = (0, 20),
-    saturate_range: Tuple[float, float] = (0, 1),
-    callback: QuantizeCallback = linear_quantize_callback,
-) -> int:
-    """calculate the best decimal bits for given tensor.
+class DecimalOptimizer:
+    """calculate the best fractional bits for given tensor."""
 
-    Args:
-        tensor (torch.Tensor): input tensor
-        bits (int): bitwidth
-        decimal_range (Tuple[int, int], optional): search range of decimal bits. Defaults to (0, 20).
-        saturate_range (Tuple[float, float], optional): quantiles used to clamp the input tensor before searching decimal bits. Defaults to (0, 1).
-        callback (QuantizeCallback, optional): callback for actual operation of quantizing tensor. Defaults to [linear\_quantize\_callback][qsparse.quantize.linear_quantize_callback].
-
-    Returns:
-        int: decimal bits
-    """
-    err = float("inf")
-    best_n = None
-    assert len(decimal_range) == 2
-    tensor = tensor.reshape(-1)  # flatten
-    if saturate_range != (0, 1):
+    def __init__(
+        self,
+        decimal_range: Tuple[int, int] = (0, 20),
+        saturate_range: Tuple[float, float] = (0, 1),
+    ):
+        """
+        Args:
+            decimal_range (Tuple[int, int], optional): search range of fractional bits. Defaults to (0, 20).
+            saturate_range (Tuple[float, float], optional): quantiles used to clamp the input tensor before searching decimal bits. Defaults to (0, 1).
+        """
+        assert len(decimal_range) == 2
         assert (
             0 <= saturate_range[0] <= saturate_range[1] <= 1
         ), f"illegal saturate_range {saturate_range}"
-        tensor = torch.clamp(
-            tensor,
-            approx_quantile(tensor, saturate_range[0]),
-            approx_quantile(tensor, saturate_range[1]),
-        )
-    for n in range(*decimal_range):
-        tensor_q = callback(tensor, bits, decimal=n)
-        err_ = torch.sum((tensor - tensor_q) ** 2).item()
-        if err_ < err:
-            best_n = n
-            err = err_
-    return best_n
+        self.decimal_range = decimal_range
+        self.saturate_range = saturate_range
+
+    def __call__(
+        self,
+        tensor: torch.Tensor,
+        bits: int,
+        init: int,
+        quantize_callback: QuantizeCallback,
+    ) -> int:
+        """calculate the best fractional bits for given tensor.
+
+        Args:
+            tensor (torch.Tensor): input tensor
+            bits (int): bitwidth
+            init (Union[float, int]): initial quantization weight
+            quantize_callback (QuantizeCallback, optional): callback for actual operation of quantizing tensor. Defaults to [linear\_quantize\_callback][qsparse.quantize.linear_quantize_callback].
+
+        Returns:
+            int: fractional bits (decimal point)
+        """
+        with torch.no_grad():
+            err = float("inf")
+            best_n = None
+            tensor = tensor.reshape(-1)  # flatten
+            if self.saturate_range != (0, 1):
+                tensor = torch.clamp(
+                    tensor,
+                    approx_quantile(tensor, self.saturate_range[0]),
+                    approx_quantile(tensor, self.saturate_range[1]),
+                )
+            for n in range(*self.decimal_range):
+                tensor_q = quantize_callback(tensor, bits, decimal=n)
+                err_ = torch.sum((tensor - tensor_q) ** 2).item()
+                if err_ < err:
+                    best_n = n
+                    err = err_
+            return best_n
+
+
+class ScalerQuantization(torch.autograd.Function):
+    """Straight-Through Gradient Estimator (with scaler).
+
+    Please look for detailed description on arguments in [scaler\_quantize\_callback][qsparse.quantize.scaler_quantize_callback].
+    """
+
+    @staticmethod
+    def forward(
+        ctx,
+        input: torch.Tensor,
+        bits: int = 8,
+        scaler: TensorOrFloat = 0.1,
+        channel_index: int = 1,
+        use_uint: bool = False,
+        backward_passthrough: bool = False,
+        flip_axis: bool = False,
+    ):
+        """quantize the input tensor and prepare for backward computation."""
+        ctx.backward_passthrough = backward_passthrough
+        ctx.notch = 1 if flip_axis else 0
+        limit = 2.0 ** (bits - 1)
+        shape = [1 for _ in input.shape]
+        if isinstance(scaler, torch.Tensor) and sum(scaler.shape) > 1:
+            assert (
+                len(scaler) == input.shape[channel_index]
+            ), "channel of input and decimal must be equal in channel-wise quantization"
+            shape[channel_index] = -1
+            scaler = scaler.view(*shape)
+        ctx.save_for_backward(ensure_tensor(limit), ensure_tensor(scaler))
+        q = (input / scaler).round().int()
+        if use_uint:
+            q.clamp_(0, 2 * limit - 1)
+        else:
+            q.clamp_(
+                -limit + ctx.notch,
+                limit - 1 + ctx.notch,
+            )
+        return q.float() * scaler
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        """gradient computation for quantization operation."""
+        limit, scaler = ctx.saved_tensors
+        if ctx.backward_passthrough:
+            v = grad_output
+        else:
+            v = grad_output.clamp_(
+                (-limit + ctx.notch) * scaler,
+                (limit - 1 + ctx.notch) * scaler,
+            )
+        return (v,) + (None,) * 6
+
+
+def scaler_quantize_callback(
+    inp: torch.Tensor,
+    bits: int = 8,
+    scaler: TensorOrFloat = 0.1,
+    channel_index: int = 1,
+    use_uint: bool = False,
+    backward_passthrough: bool = False,
+    flip_axis: bool = False,
+) -> torch.Tensor:
+    """scaler-based quantization function with type signature of [QuantizeCallback][qsparse.common.QuantizeCallback].
+
+    Args:
+        inp (torch.Tensor): input tensor
+        bits (int, optional): bitwidth. Defaults to 8.
+        scaler (TensorOrFloat, optional): quantization scaler, will be tensor of scalers for channel-wise quantization. Defaults to 0.1.
+        channel_index (int, optional): dimension index for channel. Defaults to 1.
+        use_uint (bool, optional): whether to use uint to quantize (useful for ReLu activations). Defaults to False.
+        backward_passthrough (bool, optional): whether to just use `identity` function for backward pass. Defaults to False.
+        flip_axis (bool, optional): whether to quantize positive values with negative axis and vice versa. Examples: normal int8 quantization will cast input to `[-128, 127]`, but with axis flipped, the input will be mapped to `[-127, 128]`.  Defaults to False.
+
+    Returns:
+        torch.Tensor: quantized tensor
+    """
+    return ScalerQuantization.apply(
+        inp, bits, scaler, channel_index, use_uint, backward_passthrough, flip_axis
+    )
+
+
+class ScalerOptimizer:
+    """calculate the best quantization scaler for given tensor."""
+
+    def __init__(
+        self,
+        decimal_range: Tuple[int, int] = (0, 20),
+        saturate_range: Tuple[float, float] = (0, 1),
+    ):
+        """
+        Args:
+            decimal_range (Tuple[int, int], optional): search range of fractional bits. Defaults to (0, 20).
+            saturate_range (Tuple[float, float], optional): quantiles used to clamp the input tensor before searching decimal bits. Defaults to (0, 1).
+        """
+        assert len(decimal_range) == 2
+        assert (
+            0 <= saturate_range[0] <= saturate_range[1] <= 1
+        ), f"illegal saturate_range {saturate_range}"
+        self.decimal_range = decimal_range
+        self.saturate_range = saturate_range
+
+    def __call__(
+        self,
+        tensor: torch.Tensor,
+        bits: int,
+        init: float,
+        quantize_callback: QuantizeCallback,
+    ) -> float:
+        """calculate the best quantization scaler for given tensor.
+
+        Args:
+            tensor (torch.Tensor): input tensor
+            bits (int): bitwidth
+            init (Union[float, int]): initial quantization scaler
+            quantize_callback (QuantizeCallback, optional): callback for actual operation of quantizing tensor. Defaults to [scaler\_quantize\_callback][qsparse.quantize.scaler_quantize_callback].
+
+        Returns:
+            float: quantization scaler
+        """
+        with torch.no_grad():
+            tensor = tensor.reshape(-1)  # flatten
+            if self.saturate_range != (0, 1):
+                tensor = torch.clamp(
+                    tensor,
+                    approx_quantile(tensor, self.saturate_range[0]),
+                    approx_quantile(tensor, self.saturate_range[1]),
+                )
+
+        tensor = tensor.detach()
+        x0 = np.array(init)
+
+        def func(x):
+            tensor_q = quantize_callback(tensor, bits, float(x))
+            return torch.mean((tensor - tensor_q) ** 2).item()
+
+        result = optimize.minimize(func, x0, method="Nelder-Mead")
+        best = abs(float(result.x))
+        return best
 
 
 class QuantizeLayer(nn.Module):
@@ -157,13 +339,12 @@ class QuantizeLayer(nn.Module):
         self,
         bits: int = 8,
         channelwise: int = 1,
-        decimal_range: Tuple[int, int] = (0, 20),
-        saturate_range: Tuple[float, float] = (0, 1),
         # for step-wise training
         timeout: int = 1000,
         interval: int = -1,
         window_size: int = 1,
         # for customization
+        optimizer: QuantizeOptimizer = DecimalOptimizer(),
         callback: QuantizeCallback = linear_quantize_callback,
         # for debug purpose
         collapse: int = 0,
@@ -181,12 +362,11 @@ class QuantizeLayer(nn.Module):
         self.timeout = timeout
         self._bits = bits
         self.callback = callback
+        self.optimizer = optimizer
         self.interval = interval
         self._collapse = collapse
-        self.decimal_range = decimal_range
-        self.saturate_range = saturate_range
 
-        for k in ["decimal", "_n_updates", "bits", "_quantized"]:
+        for k in ["weight", "_n_updates", "bits", "_quantized"]:
             self.register_parameter(
                 k,
                 nn.Parameter(
@@ -209,7 +389,7 @@ class QuantizeLayer(nn.Module):
             torch.Tensor: quantized tensor
         """
         if not self.initted:
-            self.decimal = nn.Parameter(
+            self.weight = nn.Parameter(
                 torch.ones(1 if self.channelwise < 0 else x.shape[self.channelwise]).to(
                     x.device
                 ),
@@ -228,9 +408,24 @@ class QuantizeLayer(nn.Module):
                 requires_grad=False,
             )
 
+        def time_to_next_quantization(offset=0):
+            t = self._n_updates.item() + offset
+            post_q_time_delta = t - self.timeout
+            if t <= self.timeout:
+                return self.timeout - t
+            else:
+                if self.interval > 0:
+                    remaining_fraction = (
+                        math.ceil(post_q_time_delta / self.interval)
+                        - post_q_time_delta / self.interval
+                    )
+                    return int(self.interval * remaining_fraction)
+                else:
+                    return float("inf")
+
         if (
-            (self.timeout - self.window_size) < self._n_updates <= self.timeout
-        ):  # only collecting when needed to speedup
+            time_to_next_quantization() <= self.window_size
+        ):  # to speedup by only collecting when needed
             if self._collapse >= 0:
                 for t in (
                     x[nd_slice(len(x.shape), self._collapse, end=self.window_size)]
@@ -241,71 +436,56 @@ class QuantizeLayer(nn.Module):
             else:
                 self.window.append(x.detach().to("cpu"))
         else:
-            if self.interval <= 0:
-                self.window.clear()
+            self.window.clear()
 
         # add window size check to avoid quantize a layer which always set to eval
         if (self.training or (not self._quantized)) and (len(self.window) > 0):
-            if (self._n_updates == self.timeout and not self._quantized) or (
-                self._n_updates > self.timeout
-                and ((self._n_updates - self.timeout) % self.interval) == 0
-                and self.interval > 0
-            ):
+            if time_to_next_quantization() == 0:
                 if len(self.window) < self.window_size:
-                    warnings.warn(
+                    warnings.warning(
                         f"window is not full when quantization, this will cause performance degradation! (window has {len(self.window)} elements while window_size parameter is {self.window_size})"
                     )
                 if self.channelwise >= 0:
                     for i in range(x.shape[self.channelwise]):
-                        n = arg_decimal_min_mse(
+                        sl = [
+                            slice(0, cs) if ci != self.channelwise else i
+                            for ci, cs in enumerate(x.shape)
+                        ]
+                        n = self.optimizer(
                             torch.cat(
-                                [
-                                    a[
-                                        tuple(
-                                            [
-                                                slice(0, cs)
-                                                if ci != self.channelwise
-                                                else i
-                                                for ci, cs in enumerate(x.shape)
-                                            ]
-                                        )
-                                    ].reshape(-1)
-                                    for a in self.window
-                                ],
+                                [a[sl].reshape(-1) for a in self.window],
                                 dim=0,
                             ),
                             self.bits,
-                            self.decimal_range,
-                            self.saturate_range,
+                            self.weight[i].item(),
                             self.callback,
                         )
-                        self.decimal.data[i] = n
+                        self.weight.data[i] = n
                     if get_option("log_during_train"):
                         logging.info(
-                            f"[Quantize{self.name if self.name == '' else f' @ {self.name}'}] (channelwise) avg decimal = {self.decimal.float().mean().item()}"
+                            f"[Quantize{self.name if self.name == '' else f' @ {self.name}'}] (channelwise) avg quantization weight = {self.weight.float().mean().item()}"
                         )
                 else:
-                    n = arg_decimal_min_mse(
+                    n = self.optimizer(
                         torch.cat([a.reshape(-1) for a in self.window], dim=0),
                         self.bits,
-                        self.decimal_range,
-                        self.saturate_range,
+                        self.weight.item(),
                         self.callback,
                     )
                     if get_option("log_during_train"):
                         logging.info(
-                            f"[Quantize{self.name if self.name == '' else f' @ {self.name}'}] decimal = {n}"
+                            f"[Quantize{self.name if self.name == '' else f' @ {self.name}'}] quantization weight = {n}"
                         )
-                    self.decimal.data[:] = n
+                    self.weight.data[:] = n
 
                 self._quantized[0] = True
 
                 # proactively free up memory
-                if self.interval <= 0:
+                if time_to_next_quantization(offset=1) > 0:
                     self.window.clear()
 
         if self._quantized:
-            out = self.callback(x, self.bits, self.decimal, self.channelwise)
+            out = self.callback(x, self.bits, self.weight, self.channelwise)
         else:
             out = x
 
@@ -318,13 +498,12 @@ def quantize(
     inp: nn.Module = None,
     bits: int = 8,
     channelwise: int = 1,
-    decimal_range: Tuple[int, int] = (0, 20),
-    saturate_range: Tuple[float, float] = (0, 1),
     # for step-wise training
     timeout: int = 1000,
     interval: int = -1,
     window_size: int = 1,
     # for customization
+    optimizer: QuantizeOptimizer = DecimalOptimizer(),
     callback: QuantizeCallback = linear_quantize_callback,
     # for bias quantization, default to -1 is to not quantize bias
     bias_bits: int = -1,
@@ -339,11 +518,10 @@ def quantize(
         inp (nn.Module, optional): input module whose weight is to be quantized. Defaults to None.
         bits (int, optional): bitwidth for weight. Defaults to 8.
         channelwise (int, optional): dimension index for channel. Defaults to 1. When channelwise >= 0, channel-wise quantization is enabled. When set to -1, channel-wise quantization is disabled.
-        decimal_range (Tuple[int, int], optional): search range of decimal bits. Defaults to (0, 20).
-        saturate_range (Tuple[float, float], optional): quantiles used to clamp tensors before searching decimal bits. Defaults to (0, 1).
         timeout (int, optional): the steps to compute the best decimal bits. Defaults to 1000.
         interval (int, optional): interval of steps before each time to compute the best decimal bits. Defaults to -1, means only calculating the decimal bits once.
         window_size (int, optional): number of tensors used for computing the decimal bits. Defaults to 1.
+        optimizer (QuantizeOptimizer, optional): optimizer used to compute the best quantization weight. Defaults to `DecimalOptimizer()`.
         callback (QuantizeCallback, optional):  callback for actual operation of quantizing tensor, used for customization. Defaults to [linear\_quantize\_callback][qsparse.quantize.linear_quantize_callback].
         bias_bits (int, optional): bitwidth for bias. Defaults to -1, means not quantizing bias.
         name (str, optional): name of the quantize layer created, used for better logging. Defaults to "".
@@ -355,8 +533,7 @@ def quantize(
     kwargs = dict(
         bits=bits,
         channelwise=channelwise,
-        decimal_range=decimal_range,
-        saturate_range=saturate_range,
+        optimizer=optimizer,
         timeout=timeout,
         interval=interval,
         window_size=window_size,
@@ -372,8 +549,7 @@ def quantize(
             return QuantizeLayer(
                 bits=bias_bits if is_bias else bits,
                 channelwise=(0 if channelwise >= 0 else -1) if is_bias else channelwise,
-                decimal_range=decimal_range,
-                saturate_range=saturate_range,
+                optimizer=optimizer,
                 timeout=int(timeout),
                 interval=int(interval),
                 window_size=window_size,
