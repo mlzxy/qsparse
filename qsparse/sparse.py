@@ -151,7 +151,7 @@ class BanditPruning(torch.autograd.Function):
         if t.item() == 0:
             T = t + 1
         else:
-            T = (t + 0.0001) / sparsity
+            T = t + 0.0001
         variance += torch.sqrt(2.0 * torch.log(T) / safe_count)
         lower_conf_costs = mean - torch.sqrt(torch.log(T) * variance / safe_count)
         lower_conf_costs[count < 1] = -float("inf")
@@ -205,13 +205,16 @@ class BanditPruning(torch.autograd.Function):
 
 
 class BanditPruningCallback(nn.Module):
-    def __init__(self, exploration_steps: int, collapse_batch_dim: bool = True):
+    def __init__(
+        self, exploration_steps: int = float("inf"), collapse_batch_dim: bool = True
+    ):
         """Callback to prune the network based on multi-arm bandits algorithms (UCBVTuned is used here)
 
         Args:
             exploration_steps (int): How many steps used for bandit learning
             collapse_batch_dim (bool, optional): whether treat the first dimension as batch dimension. Defaults to True.
         """
+        super().__init__()
         self.exploration_steps = exploration_steps
         self._collapse = 0 if collapse_batch_dim else -1
         self.mask_shape = None
@@ -272,7 +275,7 @@ class BanditPruningCallback(nn.Module):
             self.normalizer,
             self._collapse,  # parameters
             deterministic,
-            self.mask,
+            mask,
         )
         if self.training:
             self.t.data += 1

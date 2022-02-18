@@ -5,6 +5,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from qsparse import convert, prune, quantize
+from qsparse.sparse import BanditPruningCallback
 
 
 class LeNet(nn.Module):
@@ -48,7 +49,7 @@ def test_lenet_convert():
 
     lenet_pruned = convert(
         lenet_float,
-        prune(sparsity=0.5),
+        prune(sparsity=0.5, callback=BanditPruningCallback(exploration_steps=10)),
         weight_layers=[nn.Conv2d, nn.Linear],
         activation_layers=[nn.Conv2d, nn.Linear],
         excluded_weight_layer_indexes=pruning_excluded_layers,
@@ -63,7 +64,7 @@ def test_lenet_convert():
         input=True,  # input layer is quantized
     )
 
-    gt = "Sequential(\n  (0): QuantizeLayer()\n  (1): LeNet(\n    (conv1): Sequential(\n      (0): Conv2d(\n        3, 6, kernel_size=(5, 5), stride=(1, 1)\n        (quantize): QuantizeLayer()\n      )\n      (1): QuantizeLayer()\n    )\n    (conv2): Sequential(\n      (0): Sequential(\n        (0): Conv2d(\n          6, 16, kernel_size=(5, 5), stride=(1, 1)\n          (prune): PruneLayer()\n          (quantize): QuantizeLayer()\n        )\n        (1): PruneLayer()\n      )\n      (1): QuantizeLayer()\n    )\n    (fc1): Sequential(\n      (0): Sequential(\n        (0): Linear(\n          in_features=400, out_features=120, bias=True\n          (prune): PruneLayer()\n          (quantize): QuantizeLayer()\n        )\n        (1): PruneLayer()\n      )\n      (1): QuantizeLayer()\n    )\n    (fc2): Sequential(\n      (0): Sequential(\n        (0): Linear(\n          in_features=120, out_features=84, bias=True\n          (prune): PruneLayer()\n          (quantize): QuantizeLayer()\n        )\n        (1): PruneLayer()\n      )\n      (1): QuantizeLayer()\n    )\n    (fc3): Sequential(\n      (0): Linear(\n        in_features=84, out_features=10, bias=True\n        (quantize): QuantizeLayer()\n      )\n      (1): QuantizeLayer()\n    )\n  )\n)"
+    gt = "Sequential(\n  (0): QuantizeLayer()\n  (1): LeNet(\n    (conv1): Sequential(\n      (0): Conv2d(\n        3, 6, kernel_size=(5, 5), stride=(1, 1)\n        (quantize): QuantizeLayer()\n      )\n      (1): QuantizeLayer()\n    )\n    (conv2): Sequential(\n      (0): Sequential(\n        (0): Conv2d(\n          6, 16, kernel_size=(5, 5), stride=(1, 1)\n          (prune): PruneLayer(\n            (callback): BanditPruningCallback()\n          )\n          (quantize): QuantizeLayer()\n        )\n        (1): PruneLayer(\n          (callback): BanditPruningCallback()\n        )\n      )\n      (1): QuantizeLayer()\n    )\n    (fc1): Sequential(\n      (0): Sequential(\n        (0): Linear(\n          in_features=400, out_features=120, bias=True\n          (prune): PruneLayer(\n            (callback): BanditPruningCallback()\n          )\n          (quantize): QuantizeLayer()\n        )\n        (1): PruneLayer(\n          (callback): BanditPruningCallback()\n        )\n      )\n      (1): QuantizeLayer()\n    )\n    (fc2): Sequential(\n      (0): Sequential(\n        (0): Linear(\n          in_features=120, out_features=84, bias=True\n          (prune): PruneLayer(\n            (callback): BanditPruningCallback()\n          )\n          (quantize): QuantizeLayer()\n        )\n        (1): PruneLayer(\n          (callback): BanditPruningCallback()\n        )\n      )\n      (1): QuantizeLayer()\n    )\n    (fc3): Sequential(\n      (0): Linear(\n        in_features=84, out_features=10, bias=True\n        (quantize): QuantizeLayer()\n      )\n      (1): QuantizeLayer()\n    )\n  )\n)"
     assert str(lenet_pruned_quantized) == gt
 
 

@@ -1,6 +1,7 @@
 import numpy as np
 import pytest
 import torch
+import torch.autograd as autograd
 import torch.nn.functional as F
 
 from qsparse import quantize
@@ -144,3 +145,12 @@ def test_non_channelwise():
 
     assert qconv.quantize.weight.shape.numel() == 1
     assert qconv.quantize_bias.weight.shape.numel() == 1
+
+
+def test_scaler_quantization():
+    # TODO
+    # 1. test scaler callback (computation)
+    # 2. test backward grad (identity)
+    # 3. test quantization error reduce (when flags are set)
+    # 4. test optimizer cost reduce
+    pass

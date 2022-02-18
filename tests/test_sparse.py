@@ -1,11 +1,15 @@
 # fmt: off
+import math
+
 import numpy as np
 import pytest
 import torch
+import torch.nn as nn
 
 from qsparse import (prune, structured_prune_callback,
                      unstructured_prune_callback,
                      unstructured_uniform_prune_callback)
+from qsparse.sparse import BanditPruningCallback
 
 # fmt: on
 
@@ -20,6 +24,24 @@ def test_feature():
     for _ in range(
         start + interval * (repetition + 1)
     ):  # ensure the sparsification has been triggered
+        output = prune_layer(data).numpy()
+    assert np.isclose(get_sparsity(output), 0.5, atol=1 / np.prod(output.shape))
+    assert np.all((output == 0) == (prune_layer.mask.numpy() == 0))
+
+    prune_layer = prune(
+        sparsity=0.5,
+        start=start,
+        interval=interval,
+        repetition=repetition,
+        callback=BanditPruningCallback(),
+        callback_prune_input=True,
+    )
+    prune_layer.train()
+    for _ in range(
+        start + interval * (repetition + 1)
+    ):  # ensure the sparsification has been triggered
+        if _ == start + interval * repetition:
+            prune_layer.eval()
         output = prune_layer(data).numpy()
     assert np.isclose(get_sparsity(output), 0.5, atol=1 / np.prod(output.shape))
     assert np.all((output == 0) == (prune_layer.mask.numpy() == 0))
@@ -77,10 +99,33 @@ def test_weight():
     assert np.all(
         (pconv.weight.detach().numpy() == 0) == (pconv.prune.mask.detach().numpy() == 0)
     )
-
     assert not np.isclose(
         get_sparsity(dict(pconv.named_parameters())["weight"]), 0.5, atol=0.1
     ), "parameter['weight'] shall store the untouched weight without pruning"
+
+    pconv = prune(
+        torch.nn.Conv2d(10, 30, 3),
+        sparsity=0.5,
+        start=start,
+        interval=interval,
+        repetition=repetition,
+        mask_refresh_interval=10,
+        callback=BanditPruningCallback(),
+        callback_prune_input=True,
+    )
+    pconv.train()
+    for _ in range(
+        start + interval * (repetition + 1)
+    ):  # ensure the sparsification has been triggered
+        pconv(data)
+        print(pconv.prune._n_updates.item())
+    assert np.isclose(
+        get_sparsity(pconv.weight), 0.5, atol=1 / np.prod(pconv.weight.shape)
+    )
+    pconv.eval()
+    assert np.all(
+        (pconv.weight.detach().numpy() == 0) == (pconv.prune.mask.detach().numpy() == 0)
+    )
 
     pconv = prune(
         torch.nn.Conv2d(10, 30, 3),
@@ -135,3 +180,23 @@ def test_callback():
 
         result_sparsity = (~mask).sum() / np.prod(mask.shape)
         assert np.isclose(sparsity, result_sparsity, atol=1 / np.prod(mask.shape))
+
+
+def test_bandit_pruning():
+    shape = (3, 24, 24)
+    mean = torch.rand(*shape)
+    MSE = nn.MSELoss(reduce="sum")
+    mask = torch.ones(shape)
+    layer = BanditPruningCallback(collapse_batch_dim=False)
+
+    for _ in range(1000):
+        inp = torch.normal(mean, 1)
+        inp.requires_grad = True
+        out = layer(inp, 0.5, mask)
+        loss = MSE(inp, out)
+        loss.backward()
+
+    layer.eval()
+    result = layer(mean, 0.5, mask)
+    keep, drop = mean[result > 0].mean().item(), mean[result <= 0].mean().item()
+    assert keep > 0.7 and drop < 0.3

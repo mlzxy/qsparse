@@ -85,7 +85,29 @@ def test_complex_sequential():
     )
     net.eval()
     gt = net(inputs)
-    net_fused = fuse_bn(net)
+    net_fused = fuse_bn(net, inplace=False)
+    assert "batchnorm" not in str(net_fused).lower()
+    pred = net_fused(inputs)
+    assert torch.allclose(gt, pred, atol=1e-5)
+
+    class Net(nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            self.net = nn.Sequential(
+                net1,
+                nn.Sequential(net3, net4),
+                net2,
+                nn.Conv2d(10, 10, 3),
+                nn.Sequential(bn),
+            )
+
+        def forward(self, x):
+            return self.net(x)
+
+    net = Net()
+    net.eval()
+    gt = net(inputs)
+    net_fused = fuse_bn(net, inplace=False)
     assert "batchnorm" not in str(net_fused).lower()
     pred = net_fused(inputs)
     assert torch.allclose(gt, pred, atol=1e-5)
