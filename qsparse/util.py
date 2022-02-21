@@ -91,11 +91,27 @@ def nn_module(mod: nn.Module) -> nn.Module:
         return mod
 
 
-def wrap_tensor_with_list(v: T) -> List[T]:
-    if isinstance(v, torch.Tensor):
-        return [v]
-    else:
-        return v
+def align_tensor_to_shape(x: torch.Tensor, shape: List[int]) -> torch.Tensor:
+    """align a tensor to a given shape through averaging.
+
+    Args:
+        x (torch.Tensor): input tensor
+        shape (List[int]): target shape
+
+    Raises:
+        ValueError: when the input tensor has different number of dimensions than the target shape, or the target shape provides a non-1 dimension to reduce
+
+    Returns:
+        torch.Tensor: aligned tensor
+    """
+    assert len(x.shape) == len(shape), "mismatch between the input tensor and mask"
+    for i, (sx, sm) in enumerate(zip(x.shape, shape)):
+        if sx != sm:
+            if sm == 1:
+                x = x.mean(i, keepdim=True)
+            else:
+                raise ValueError("mismatch between the input tensor and mask")
+    return x
 
 
 def log_functor(name: str):

@@ -85,5 +85,5 @@ class PruneCallback(Protocol):
             mask (torch.Tensor, optional): init mask of the pruning procedure. Defaults to None.
 
         Returns:
-            torch.Tensor: binary mask or pruned version of input
+            torch.Tensor: pruned version of input
         """

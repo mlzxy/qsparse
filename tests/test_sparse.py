@@ -6,10 +6,9 @@ import pytest
 import torch
 import torch.nn as nn
 
-from qsparse import (prune, structured_prune_callback,
-                     unstructured_prune_callback,
-                     unstructured_uniform_prune_callback)
-from qsparse.sparse import BanditPruningCallback
+from qsparse import prune
+from qsparse.sparse import (BanditPruningCallback, MagnitudePruningCallback,
+                            UniformPruningCallback)
 
 # fmt: on
 
@@ -34,13 +33,12 @@ def test_feature():
         interval=interval,
         repetition=repetition,
         callback=BanditPruningCallback(),
-        callback_prune_input=True,
     )
     prune_layer.train()
     for _ in range(
-        start + interval * (repetition + 1)
+        start + interval * (repetition + 2)
     ):  # ensure the sparsification has been triggered
-        if _ == start + interval * repetition:
+        if _ == start + interval * (repetition + 2) - 1:
             prune_layer.eval()
         output = prune_layer(data).numpy()
     assert np.isclose(get_sparsity(output), 0.5, atol=1 / np.prod(output.shape))
@@ -109,9 +107,7 @@ def test_weight():
         start=start,
         interval=interval,
         repetition=repetition,
-        mask_refresh_interval=10,
-        callback=BanditPruningCallback(),
-        callback_prune_input=True,
+        callback=BanditPruningCallback(mask_refresh_interval=interval),
     )
     pconv.train()
     for _ in range(
@@ -151,32 +147,34 @@ def test_callback():
     sparsity = 0.5
 
     # unstructured
-    for shape in [(3, 32, 32), (3, 32), (32)]:
-        mask = unstructured_prune_callback(
-            [torch.rand(shape) for _ in range(10)], sparsity
-        )
+    for shape in [(3, 32, 32), (3, 32), (32,)]:
+        mask = torch.ones(*shape).bool()
+        MagnitudePruningCallback()(torch.rand(shape), sparsity, mask)
         result_sparsity = (~mask).sum() / np.prod(mask.shape)
         assert np.isclose(sparsity, result_sparsity, atol=1 / np.prod(mask.shape))
 
-    for shape in [(3, 32, 32), (3, 32), (32)]:
-        mask = unstructured_uniform_prune_callback(
-            [torch.rand(shape) for _ in range(10)], sparsity
-        )
+    for shape in [(3, 32, 32), (3, 32), (32,)]:
+        mask = torch.ones(*shape).bool()
+        UniformPruningCallback()(torch.rand(shape), sparsity, mask)
         result_sparsity = (~mask).sum() / np.prod(mask.shape)
         assert np.isclose(sparsity, result_sparsity, atol=1 / np.prod(mask.shape))
-    mask = unstructured_uniform_prune_callback(
-        [torch.rand(shape) for _ in range(10)], 0.7, mask=mask
-    )
+
+    mask = torch.ones(*shape).bool()
+    UniformPruningCallback()(torch.rand(shape), 0.7, mask)
     result_sparsity = (~mask).sum() / np.prod(mask.shape)
     assert np.isclose(0.7, result_sparsity, atol=1 / np.prod(mask.shape))
 
     # structured
-    data = [torch.rand((32, 32, 32)) for _ in range(10)]
-    for channels in [{0}, {0, 1}, {0, 1, 2}]:
-        mask = structured_prune_callback(data, sparsity, prunable=channels)
+    shape = (32, 32, 32)
+    data = torch.rand(shape)
+    for channels in [[0], [0, 1], [0, 1, 2]]:
+        mask = torch.ones(
+            *[shape[i] if i not in channels else 1 for i in range(3)]
+        ).bool()
+        MagnitudePruningCallback()(data, sparsity, mask)
         for i in range(3):
             if i not in channels:
-                assert mask.shape[i] == 1
+                assert mask.shape[i] == 32
 
         result_sparsity = (~mask).sum() / np.prod(mask.shape)
         assert np.isclose(sparsity, result_sparsity, atol=1 / np.prod(mask.shape))
@@ -186,8 +184,8 @@ def test_bandit_pruning():
     shape = (3, 24, 24)
     mean = torch.rand(*shape)
     MSE = nn.MSELoss(reduce="sum")
-    mask = torch.ones(shape)
-    layer = BanditPruningCallback(collapse_batch_dim=False)
+    mask = torch.ones((1,) + shape)
+    layer = BanditPruningCallback()
 
     for _ in range(1500):
         inp = torch.normal(mean, 1)
@@ -197,6 +195,25 @@ def test_bandit_pruning():
         loss.backward()
 
     layer.eval()
-    result = layer(mean, 0.5, mask)
+    result = layer(mean, 0.5, mask)[0]
+    assert np.isclose(get_sparsity(mask), 0.5, atol=1 / np.prod(shape))
     keep, drop = mean[result > 0].mean().item(), mean[result <= 0].mean().item()
     assert keep > 0.7 and drop < 0.3
+
+
+def test_grad_pruning():
+    shape = (3, 24, 24)
+    mean = torch.rand(*shape)
+    MSE = nn.MSELoss(reduce="sum")
+    mask = torch.ones((1,) + shape)
+    layer = MagnitudePruningCallback(use_gradient=True)
+
+    for _ in range(1500):
+        inp = torch.normal(mean, 1)
+        inp = inp.view(1, *inp.shape)
+        inp.requires_grad = True
+        out = layer(inp, 0.5, mask)
+        out.backward(torch.rand((1,) + shape) / 10)
+
+    layer.eval()
+    assert np.isclose(get_sparsity(mask), 0.5, atol=1 / np.prod(shape))

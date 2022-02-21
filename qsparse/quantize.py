@@ -499,7 +499,7 @@ def quantize(
     interval: int = -1,
     window_size: int = 1,
     # for customization
-    optimizer: QuantizeOptimizer = DecimalOptimizer(),
+    optimizer: QuantizeOptimizer = None,
     callback: QuantizeCallback = linear_quantize_callback,
     # for bias quantization, default to -1 is to not quantize bias
     bias_bits: int = -1,
@@ -537,6 +537,8 @@ def quantize(
         bias_bits=bias_bits,
         name=name,
     )
+
+    optimizer = optimizer or DecimalOptimizer()
 
     def get_quantize_layer(feature_collapse=0, is_bias=False):
         if bias_bits == -1 and is_bias:
