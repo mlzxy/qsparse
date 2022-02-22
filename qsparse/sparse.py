@@ -1,5 +1,6 @@
 import math
 import warnings
+from argparse import ArgumentError
 from collections import deque
 from typing import Iterable, List, Tuple, Union
 
@@ -14,19 +15,30 @@ from qsparse.util import align_tensor_to_shape, get_option, logging, nd_slice
 
 
 class MagnitudePruningCallback(nn.Module):
-    def __init__(self, mask_refresh_interval: int = -1, use_gradient: bool = False):
+    def __init__(
+        self,
+        mask_refresh_interval: int = -1,
+        use_gradient: bool = False,
+        running_average: bool = True,
+    ):
         """
         Magnitude-based pruning function with type signature of [PruneCallback][qsparse.common.PruneCallback].
 
         Args:
             mask_refresh_interval (int, optional): number of steps to refresh mask. Defaults to 1.
             use_gradient (bool, optional): whether use the magnitude of gradients
+            running_average (bool, optional): whether use the running average of magnitude. Defaults to True.
         """
         super().__init__()
         self.mask_refresh_interval = mask_refresh_interval
         self.use_gradient = use_gradient
         self.t = nn.Parameter(torch.full((1,), -1), requires_grad=False)
         self.prev_hook = None
+        if use_gradient and not running_average:
+            raise ArgumentError(
+                "the combination of `use_gradient=True` and `running_average=False` is not supported"
+            )
+        self.running_average = running_average
 
     @property
     def initted(self) -> bool:
@@ -35,7 +47,10 @@ class MagnitudePruningCallback(nn.Module):
     def prune_and_update_mask(
         self, x: torch.Tensor, sparsity: float, mask: torch.Tensor
     ) -> torch.Tensor:
-        importance = self.magnitude
+        if self.running_average:
+            importance = self.magnitude
+        else:
+            importance = align_tensor_to_shape(x.abs(), mask.shape)
         values = importance.flatten().sort()[0]
         n = len(values)
         idx = max(int(sparsity * n - 1), 0)
@@ -55,15 +70,17 @@ class MagnitudePruningCallback(nn.Module):
             self.update_magnitude(x)
 
     def update_magnitude(self, x):
-        with torch.no_grad():
-            x = align_tensor_to_shape(x.abs(), self.magnitude.shape)
-            self.magnitude.data[:] = (self.t * self.magnitude + x) / (self.t + 1)
+        if self.running_average:
+            with torch.no_grad():
+                x = align_tensor_to_shape(x.abs(), self.magnitude.shape)
+                self.magnitude.data[:] = (self.t * self.magnitude + x) / (self.t + 1)
 
     def initialize(self, mask: torch.Tensor):
-        self.magnitude = nn.Parameter(
-            torch.zeros(*mask.shape, device=mask.device, dtype=torch.float),
-            requires_grad=False,
-        )
+        if self.running_average:
+            self.magnitude = nn.Parameter(
+                torch.zeros(*mask.shape, device=mask.device, dtype=torch.float),
+                requires_grad=False,
+            )
 
     def forward(self, x: torch.Tensor, sparsity: float, mask: torch.Tensor):
         if self.training:

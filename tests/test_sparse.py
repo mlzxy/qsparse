@@ -85,6 +85,7 @@ def test_weight():
         start=start,
         interval=interval,
         repetition=repetition,
+        callback=MagnitudePruningCallback(running_average=False),
     )
     pconv.train()
     for _ in range(
