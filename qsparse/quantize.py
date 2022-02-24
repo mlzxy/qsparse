@@ -419,8 +419,9 @@ class QuantizeLayer(nn.Module):
                 else:
                     return float("inf")
 
-        if (
-            time_to_next_quantization() <= self.window_size
+        batch_size = len(x)
+        if time_to_next_quantization() <= math.ceil(
+            self.window_size / batch_size
         ):  # to speedup by only collecting when needed
             if self._collapse >= 0:
                 for t in (
