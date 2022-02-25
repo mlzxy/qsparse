@@ -41,7 +41,13 @@ def test_weight():
     timeout = 5
     data = torch.rand((1, 10, 32, 32))
 
-    qconv = quantize(torch.nn.Conv2d(10, 30, 3), bits=8, bias_bits=8, timeout=timeout)
+    qconv = quantize(
+        torch.nn.Conv2d(10, 30, 3),
+        bits=8,
+        bias_bits=8,
+        timeout=timeout,
+        on_device_window=True,
+    )
     qconv.train()
     for _ in range(timeout + 1):
         qconv(data)

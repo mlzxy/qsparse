@@ -339,6 +339,7 @@ class QuantizeLayer(nn.Module):
         timeout: int = 1000,
         interval: int = -1,
         window_size: int = 1,
+        on_device_window: bool = False,
         # for customization
         optimizer: QuantizeOptimizer = DecimalOptimizer(),
         callback: QuantizeCallback = linear_quantize_callback,
@@ -353,6 +354,7 @@ class QuantizeLayer(nn.Module):
             )
         self.window = deque(maxlen=window_size)
         self.window_size = window_size
+        self.on_device_window = on_device_window
         self.name = name
         self.channelwise = channelwise
         self.timeout = timeout
@@ -374,6 +376,12 @@ class QuantizeLayer(nn.Module):
     def initted(self) -> bool:
         """whether the parameters of the quantize layer are initialized."""
         return self._n_updates.item() != -1
+
+    def _to_win_dev(self, tensor: torch.Tensor):
+        if self.on_device_window:
+            return tensor
+        else:
+            return tensor.to("cpu")
 
     def forward(self, x):
         """Quantize input tensor according to given configuration.
@@ -429,9 +437,9 @@ class QuantizeLayer(nn.Module):
                     .detach()
                     .split(1)
                 ):  # type: torch.Tensor
-                    self.window.append(t.to("cpu"))
+                    self.window.append(self._to_win_dev(t))
             else:
-                self.window.append(x.detach().to("cpu"))
+                self.window.append(self._to_win_dev(x.detach()))
         else:
             self.window.clear()
 
@@ -499,6 +507,7 @@ def quantize(
     timeout: int = 1000,
     interval: int = -1,
     window_size: int = 1,
+    on_device_window: bool = False,
     # for customization
     optimizer: QuantizeOptimizer = None,
     callback: QuantizeCallback = linear_quantize_callback,
@@ -518,6 +527,7 @@ def quantize(
         timeout (int, optional): the steps to compute the best decimal bits. Defaults to 1000.
         interval (int, optional): interval of steps before each time to compute the best decimal bits. Defaults to -1, means only calculating the decimal bits once.
         window_size (int, optional): number of tensors used for computing the decimal bits. Defaults to 1.
+        on_device_window (bool, optional): whether keep the tensor window on gpu device being used, or move to cpu. Default to False, means moving to cpu.
         optimizer (QuantizeOptimizer, optional): optimizer used to compute the best quantization weight. Defaults to `DecimalOptimizer()`.
         callback (QuantizeCallback, optional):  callback for actual operation of quantizing tensor, used for customization. Defaults to [linear\_quantize\_callback][qsparse.quantize.linear_quantize_callback].
         bias_bits (int, optional): bitwidth for bias. Defaults to -1, means not quantizing bias.
@@ -537,6 +547,7 @@ def quantize(
         callback=callback,
         bias_bits=bias_bits,
         name=name,
+        on_device_window=on_device_window,
     )
 
     optimizer = optimizer or DecimalOptimizer()
@@ -552,6 +563,7 @@ def quantize(
                 timeout=int(timeout),
                 interval=int(interval),
                 window_size=window_size,
+                on_device_window=on_device_window,
                 callback=callback,
                 name=name,
                 collapse=feature_collapse,
