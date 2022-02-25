@@ -1,3 +1,5 @@
+from collections import OrderedDict
+
 import numpy as np
 import pytest
 import torch
@@ -87,3 +89,22 @@ def test_data_parallel():
         input=False,
     )
     assert "quantize" in str(data_parallel_quantized).lower()
+
+
+def test_filter():
+    net = nn.Sequential(
+        OrderedDict(
+            [
+                ("conv1", nn.Conv2d(3, 6, kernel_size=5)),
+                ("special", nn.Sequential(nn.Conv2d(6, 16, kernel_size=5))),
+            ]
+        )
+    )
+    converted = convert(
+        net, quantize(bits=8), weight_layers=[nn.Conv2d], filter=["special"]
+    )
+
+    result = str(converted)
+    assert result.count("quantize") == 1 and result.index("special") < result.index(
+        "quantize"
+    )
