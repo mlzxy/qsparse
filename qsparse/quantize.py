@@ -325,6 +325,9 @@ class ScalerOptimizer:
 
             result = optimize.minimize(func, x0, method="Nelder-Mead")
             best = abs(float(result.x))
+            if best == 0:
+                logging.warning("Encounter zero scaler, using 1e-4 instead")
+                best = 1e-4
             return best
 
 
