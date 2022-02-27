@@ -31,6 +31,7 @@ def convert(  # noqa: C901
         Tuple[Type[nn.Module], Sequence[int]]
     ] = [],
     filter: Optional[Union[str, List[str]]] = None,
+    order: str = "post",
 ) -> nn.Module:
     """Automatically convert a model to a new model with its weights and
     activations transformed by the operator, e.g. [prune][qsparse.sparse.prune] or [quantize][qsparse.quantize.quantize].
@@ -46,6 +47,7 @@ def convert(  # noqa: C901
         excluded_weight_layer_indexes (Sequence[Tuple[Type[nn.Module], Sequential[int]]], optional): indexes of layers excluded in weight transformations from conversion. Defaults to [].
         excluded_activation_layer_indexes (Sequence[Tuple[Type[nn.Module], Sequential[int]]], optional): indexes of layers excluded in activation transformations from conversion. Defaults to [].
         filter (Union[str, List[str]], optional): Used to filter out a subnetwork to convert. For example, when filter="transition", then `convert` will only visit layers whose module paths contain "transition". When more than one filter is provided, the layer module path must contain all of them in order to be converted. Defaults to None, means to traverse the entire network.
+        order (str, optional): whether insert the operator after ("post") or before ("pre") the activation layers, available choices: "post", "pre". Defaults to "post".
 
     Returns:
         nn.Module: converted module
@@ -53,6 +55,7 @@ def convert(  # noqa: C901
     assert isinstance(
         operator, (PruneLayer, QuantizeLayer)
     ), "`operator` does not belong to (PruneLayer, QuantizeLayer)"
+    assert order in ["pre", "post"], "`order` must be either 'pre' or 'post'"
 
     filter = filter or []
     if isinstance(filter, str):
@@ -184,17 +187,21 @@ def convert(  # noqa: C901
             origin_m = m
             cur_scope = f"{scope}.{name}"
             if (not is_container(m)) or hasattr(m, "_qsparse_conversion"):
-                if mstr(m) in activation_counter:
+                layer_type = mstr(m)
+                if layer_type in activation_counter:
                     if (
-                        activation_counter[mstr(m)]
-                        not in excluded_activation_layer_indexes[mstr(m)]
+                        activation_counter[layer_type]
+                        not in excluded_activation_layer_indexes[layer_type]
                     ) and met_filter_condition(cur_scope):
                         _print(f"Apply {operator_name} on the {cur_scope} activation")
-                        m = nn.Sequential(m, apply_operator())
+                        if order == "post":
+                            m = nn.Sequential(m, apply_operator())
+                        else:
+                            m = nn.Sequential(apply_operator(), m)
                         setattr(m, "_qsparse_conversion", True)
                     else:
                         _print(f"Exclude {cur_scope} activation")
-                    activation_counter[mstr(m)] += 1
+                    activation_counter[layer_type] += 1
                 if origin_m is not m:
                     reassign[name] = m
             else:

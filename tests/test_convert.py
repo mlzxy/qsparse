@@ -108,3 +108,22 @@ def test_filter():
     assert result.count("quantize") == 1 and result.index("special") < result.index(
         "quantize"
     )
+
+
+def test_order():
+    net = nn.Sequential(
+        OrderedDict(
+            [
+                ("conv1", nn.Conv2d(3, 6, kernel_size=5)),
+                ("fc1", nn.Linear(84, 10)),
+            ]
+        )
+    )
+    converted = convert(
+        net, quantize(bits=8), activation_layers=[nn.Conv2d, nn.Linear], order="pre"
+    )
+    result = str(converted).lower()
+    assert result.count("quantize") == 2
+    assert result.index("quantize") < result.index("conv2d")
+    L = result.index("conv2d")
+    assert result[L:].index("linear") > result[L:].index("quantize")
