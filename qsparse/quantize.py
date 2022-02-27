@@ -1,4 +1,5 @@
 # fmt: off
+import gc
 import math
 import warnings
 from collections import deque
@@ -490,10 +491,9 @@ class QuantizeLayer(nn.Module):
                     self.weight.data[:] = n
 
                 self._quantized[0] = True
-
-                # proactively free up memory
-                if time_to_next_quantization(offset=1) > 0:
-                    self.window.clear()
+                self.window.clear()
+                gc.collect()
+                torch.cuda.empty_cache()
 
         if self._quantized:
             out = self.callback(x, self.bits, self.weight, self.channelwise)
