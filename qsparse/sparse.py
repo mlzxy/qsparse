@@ -73,7 +73,8 @@ class MagnitudePruningCallback(nn.Module):
         if self.running_average:
             with torch.no_grad():
                 x = align_tensor_to_shape(x.abs(), self.magnitude.shape)
-                self.magnitude.data[:] = (self.t * self.magnitude + x) / (self.t + 1)
+                t = self.t.item()
+                self.magnitude.data[:] = (t * self.magnitude + x) / (t + 1)
 
     def initialize(self, mask: torch.Tensor):
         if self.running_average:
