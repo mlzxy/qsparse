@@ -257,20 +257,23 @@ class BanditPruningCallback(MagnitudePruningCallback):
     def prune_and_update_mask(
         self, x: torch.Tensor, sparsity: float, mask: torch.Tensor
     ) -> torch.Tensor:
-        deterministic = self.t.item() >= self.exploration_steps
-        out = BanditPruningFunction.apply(
-            x,
-            sparsity,
-            tuple(self.cumsum.shape),
-            self.cumsum.view(-1),
-            self.cumsum_square.view(-1),
-            self.count.view(-1),
-            self.ucbT,
-            self.normalizer,
-            deterministic,
-            mask,
-        )
-        return out
+        if sparsity > 0:
+            deterministic = self.t.item() >= self.exploration_steps
+            out = BanditPruningFunction.apply(
+                x,
+                sparsity,
+                tuple(self.cumsum.shape),
+                self.cumsum.view(-1),
+                self.cumsum_square.view(-1),
+                self.count.view(-1),
+                self.ucbT,
+                self.normalizer,
+                deterministic,
+                mask,
+            )
+            return out
+        else:
+            return x
 
 
 class PruneLayer(nn.Module):
