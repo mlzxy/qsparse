@@ -313,16 +313,19 @@ class ScalerOptimizer:
                     approx_quantile(tensor, self.saturate_range[1]),
                 )
 
-        tensor = tensor.detach()
-        x0 = np.array(init)
+            tensor = tensor.detach()
+            if init == 0:
+                init = tensor.abs().mean().item()
 
-        def func(x):
-            tensor_q = quantize_callback(tensor, bits, float(x))
-            return torch.mean((tensor - tensor_q) ** 2).item()
+            x0 = np.array(init)
 
-        result = optimize.minimize(func, x0, method="Nelder-Mead")
-        best = abs(float(result.x))
-        return best
+            def func(x):
+                tensor_q = quantize_callback(tensor, bits, float(x))
+                return torch.mean((tensor - tensor_q) ** 2).item()
+
+            result = optimize.minimize(func, x0, method="Nelder-Mead")
+            best = abs(float(result.x))
+            return best
 
 
 class QuantizeLayer(nn.Module):
@@ -394,9 +397,9 @@ class QuantizeLayer(nn.Module):
         """
         if not self.initted:
             self.weight = nn.Parameter(
-                torch.ones(1 if self.channelwise < 0 else x.shape[self.channelwise]).to(
-                    x.device
-                ),
+                torch.zeros(
+                    1 if self.channelwise < 0 else x.shape[self.channelwise]
+                ).to(x.device),
                 requires_grad=False,
             )
             self._n_updates = nn.Parameter(
