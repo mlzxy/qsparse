@@ -293,6 +293,7 @@ class PruneLayer(nn.Module):
         # for customization
         callback: PruneCallback = MagnitudePruningCallback(),
         collapse: Union[int, List[int]] = 0,
+        rampup: bool = False,
         # for debug purpose
         name="",
     ):
@@ -301,13 +302,17 @@ class PruneLayer(nn.Module):
             logging.info(
                 f"[Prune{name if name == '' else f' @ {name}'}] start = {start} interval = {interval} repetition = {repetition} sparsity = {sparsity} collapse dimension = {collapse}"
             )
-        self.schedules = [start + interval * (1 + i) for i in range(repetition)]
+
+        self.schedules = [
+            start + interval * ((1 if rampup else 0) + i) for i in range(repetition)
+        ]
         self.start = start
         self.interval = interval
         self.repetition = repetition
         self.sparsity = sparsity
         self.name = name
         self.callback = callback
+        self.rampup_interval = 0 if rampup else interval
         self._collapse = (
             collapse
             if isinstance(collapse, list)
@@ -370,7 +375,7 @@ class PruneLayer(nn.Module):
         if (self._n_updates.item() in self.schedules) and self.training:
             ratio = (
                 1.0
-                - (self._n_updates.item() - self.start)
+                - (self._n_updates.item() - self.start + self.rampup_interval)
                 / (self.interval * self.repetition)
             ) ** 3
             self._cur_sparsity[0] = self.sparsity * (1 - ratio)
@@ -425,6 +430,7 @@ def prune(
     collapse: Union[str, int, List[int]] = "auto",
     # for customization
     callback: PruneCallback = None,
+    rampup: bool = False,
     # for debug purpose
     name="",
 ) -> nn.Module:
@@ -442,6 +448,7 @@ def prune(
                                  When strict=False, it will try to expand the binary mask to matched the input tensor shape during evaluation, useful for tasks whose test images are larger, like super resolution.
         collapse (Union[str, int, List[int]]): which dimension to ignore when creating binary mask. It is usually set to 0 for the batch dimension during pruning activations, and -1 when pruning weights. Default to "auto", means setting `collapse` automatically based on `inp` parameter.
         callback (PruneCallback, optional): callback for actual operation of calculating pruning mask (mask refreshing), used for customization. Defaults to [unstructured\_prune\_callback][qsparse.sparse.unstructured_prune_callback].
+        rampup (bool, optional): whether to wait another interval before starting to prune. Defaults to False.
         name (str, optional): name of the prune layer created, used for better logging. Defaults to "".
 
     Returns:
@@ -463,6 +470,7 @@ def prune(
         collapse=collapse,
         callback=callback,
         name=name,
+        rampup=rampup,
     )
 
     def get_prune_layer(
@@ -481,6 +489,7 @@ def prune(
             strict=strict,
             callback=callback,
             collapse=feature_collapse,
+            rampup=rampup,
         )
 
     if inp is None:
