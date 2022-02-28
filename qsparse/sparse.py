@@ -18,6 +18,7 @@ class MagnitudePruningCallback(nn.Module):
     def __init__(
         self,
         mask_refresh_interval: int = -1,
+        stop_mask_refresh: int = float("inf"),
         use_gradient: bool = False,
         running_average: bool = True,
     ):
@@ -26,11 +27,13 @@ class MagnitudePruningCallback(nn.Module):
 
         Args:
             mask_refresh_interval (int, optional): number of steps to refresh mask. Defaults to 1.
+            stop_mask_refresh (int, optional): when to stop refreshing mask. Defaults to float('inf').
             use_gradient (bool, optional): whether use the magnitude of gradients
             running_average (bool, optional): whether use the running average of magnitude. Defaults to True.
         """
         super().__init__()
         self.mask_refresh_interval = mask_refresh_interval
+        self.stop_mask_refresh = stop_mask_refresh
         self.use_gradient = use_gradient
         self.t = nn.Parameter(torch.full((1,), -1), requires_grad=False)
         self.prev_hook = None
@@ -91,7 +94,11 @@ class MagnitudePruningCallback(nn.Module):
                 if self.mask_refresh_interval <= 0:
                     self.mask_refresh_interval = 1
             self.receive_input(x)
-            if sparsity >= 0 and self.t.item() % self.mask_refresh_interval == 0:
+            if (
+                sparsity >= 0
+                and self.t.item() % self.mask_refresh_interval == 0
+                and self.t.item() < self.stop_mask_refresh
+            ):
                 out = self.prune_and_update_mask(x, sparsity, mask)
             else:
                 out = self.broadcast_mul(x, mask)
