@@ -458,6 +458,7 @@ class QuantizeLayer(nn.Module):
                         f"window is not full when quantization, this will cause performance degradation! (window has {len(self.window)} elements while window_size parameter is {self.window_size})"
                     )
                 if self.channelwise >= 0:
+                    old_w = self.weight.float().mean().item()
                     for i in range(x.shape[self.channelwise]):
                         sl = [
                             slice(0, cs) if ci != self.channelwise else i
@@ -475,9 +476,10 @@ class QuantizeLayer(nn.Module):
                         self.weight.data[i] = n
                     if get_option("log_during_train"):
                         logging.info(
-                            f"[Quantize{self.name if self.name == '' else f' @ {self.name}'}] (channelwise) avg quantization weight = {self.weight.float().mean().item()}"
+                            f"[Quantize{self.name if self.name == '' else f' @ {self.name}'}] (channelwise) avg quantization weight: {old_w:.4f} -> {self.weight.float().mean().item():.4f}"
                         )
                 else:
+                    old_w = self.weight.item()
                     n = self.optimizer(
                         torch.cat([a.reshape(-1) for a in self.window], dim=0),
                         self.bits,
@@ -486,7 +488,7 @@ class QuantizeLayer(nn.Module):
                     )
                     if get_option("log_during_train"):
                         logging.info(
-                            f"[Quantize{self.name if self.name == '' else f' @ {self.name}'}] quantization weight = {n}"
+                            f"[Quantize{self.name if self.name == '' else f' @ {self.name}'}] quantization weight: {old_w:.4f} -> {n:.4f}"
                         )
                     self.weight.data[:] = n
 
