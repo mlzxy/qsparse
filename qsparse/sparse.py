@@ -176,7 +176,7 @@ class BanditPruningFunction(torch.autograd.Function):
         # UCBVTune Iteration Equation
         safe_count = count + 0.0001
         mean = cumsum / safe_count
-        variance = (cumsum_square / safe_count) - mean ** 2
+        variance = (cumsum_square / safe_count) - mean**2
         if t.item() == 0:
             T = t + 1
         else:
@@ -226,13 +226,18 @@ class BanditPruningFunction(torch.autograd.Function):
             count[indexes] += 1
             t.data += 1
             cumsum[indexes] += costs
-            cumsum_square[indexes] += costs ** 2
+            cumsum_square[indexes] += costs**2
         result = grad_output * mask.expand(grad_output.shape)
         return (result,) + (None,) * 10
 
 
 class BanditPruningCallback(MagnitudePruningCallback):
-    def __init__(self, exploration_steps: int = float("inf"), **kwargs):
+    # through properly setup the bandit parameters for each layer
+    # it is possible to implement the layer-wise from bottom pruning scheme
+    # just use the `stop_mask_refresh` parameter
+    # retrieve the list of prune layers
+    # then through the order of it, set parameters one by one
+    def __init__(self, **kwargs):
         """Callback to prune the network based on multi-arm bandits algorithms (UCBVTuned is used here)
 
         Args:
@@ -242,7 +247,6 @@ class BanditPruningCallback(MagnitudePruningCallback):
         if "mask_refresh_interval" not in kwargs:
             kwargs["mask_refresh_interval"] = 1
         super().__init__(**kwargs)
-        self.exploration_steps = exploration_steps
 
     def initialize(self, mask: torch.Tensor):
         device = mask.device
@@ -265,7 +269,7 @@ class BanditPruningCallback(MagnitudePruningCallback):
         self, x: torch.Tensor, sparsity: float, mask: torch.Tensor
     ) -> torch.Tensor:
         if sparsity > 0:
-            deterministic = self.t.item() >= self.exploration_steps
+            deterministic = self.t.item() >= self.stop_mask_refresh
             out = BanditPruningFunction.apply(
                 x,
                 sparsity,
