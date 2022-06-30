@@ -60,8 +60,6 @@ pip install qsparse
 
 Documentation can be accessed from [Read the Docs](https://qsparse.readthedocs.io/en/latest/).
 
-Examples of applying QSPARSE to different tasks are provided at [qsparse-examples](https://github.com/mlzxy/qsparse-examples).
-
 ## Contribute
 
 The development environment can be setup as (Python >= 3.6 is required):
