@@ -56,10 +56,6 @@ pip install qsparse
 ```
 
 
-## Usage
-
-Documentation can be accessed from [Read the Docs](https://qsparse.readthedocs.io/en/latest/).
-
 ## Contribute
 
 The development environment can be setup as (Python >= 3.6 is required):
@@ -73,5 +69,3 @@ pre-commit install
 
 Feel free to raise an [issue](https://github.com/mlzxy/qsparse/issues/new) if you have any questions.
 
-
-```
