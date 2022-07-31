@@ -30,7 +30,8 @@ def convert(  # noqa: C901
     excluded_activation_layer_indexes: Sequence[
         Tuple[Type[nn.Module], Sequence[int]]
     ] = [],
-    filter: Optional[Union[str, List[str]]] = None,
+    include: Optional[Union[str, List[str]]] = None,
+    exclude: Optional[Union[str, List[str]]] = None,
     order: str = "post",
 ) -> nn.Module:
     """Automatically convert a model to a new model with its weights and
@@ -46,7 +47,8 @@ def convert(  # noqa: C901
         log (bool, optional): whether print the conversion log. Defaults to True.
         excluded_weight_layer_indexes (Sequence[Tuple[Type[nn.Module], Sequential[int]]], optional): indexes of layers excluded in weight transformations from conversion. Defaults to [].
         excluded_activation_layer_indexes (Sequence[Tuple[Type[nn.Module], Sequential[int]]], optional): indexes of layers excluded in activation transformations from conversion. Defaults to [].
-        filter (Union[str, List[str]], optional): Used to filter out a subnetwork to convert. For example, when filter="transition", then `convert` will only visit layers whose module paths contain "transition". When more than one filter is provided, the layer module path must contain all of them in order to be converted. Defaults to None, means to traverse the entire network.
+        include (Union[str, List[str]], optional): Used to filter out a subnetwork to convert. For example, when include="transition", then `convert` will only visit layers whose module paths include "transition". When more than one items are provided, the layer module path must include all of them in order to be converted. Defaults to None, means to traverse the entire network.
+        exclude (Union[str, List[str]], optional): Used to filter out a subnetwork to convert. For example, when exclude="transition", then `convert` will only visit layers whose module paths DO NOT include "transition". When more than one items are provided, the layer module path includes any of them will not be converted. Defaults to None, means no module will be excluded.
         order (str, optional): whether insert the operator after ("post") or before ("pre") the activation layers, available choices: "post", "pre". Defaults to "post".
 
     Returns:
@@ -57,9 +59,16 @@ def convert(  # noqa: C901
     ), "`operator` does not belong to (PruneLayer, QuantizeLayer)"
     assert order in ["pre", "post"], "`order` must be either 'pre' or 'post'"
 
-    filter = filter or []
+    filter = include or []
     if isinstance(filter, str):
         filter = [filter]
+
+    exclude = exclude or []
+    if isinstance(exclude, str):
+        exclude = [exclude]
+
+    def met_exclude_condition(module_path: str):
+        return any([s in module_path for s in exclude])
 
     def met_filter_condition(module_path: str):
         return all([s in module_path for s in filter])
@@ -75,11 +84,14 @@ def convert(  # noqa: C901
 
     def mstr(m) -> str:
         if isinstance(m, nn.Sequential):
-            return mstr(m[0])
+            for c in m.children():
+                if not isinstance(c, (QuantizeLayer, PruneLayer)):
+                    return mstr(c)
         elif isinstance(m, nn.Module):
             return m.__class__.__name__
         else:
             return m.__name__
+
 
     def is_container(m: nn.Module) -> bool:
         if len(m._modules) == 0:
@@ -97,7 +109,6 @@ def convert(  # noqa: C901
     def apply_operator(layer: Optional[nn.Module] = None) -> nn.Module:
         if layer is not None:
             if isinstance(operator, QuantizeLayer):
-
                 return quantize(layer, **copy_nn_module_on_demand(operator._kwargs))
             else:
                 return prune(layer, **copy_nn_module_on_demand(operator._kwargs))
@@ -114,6 +125,8 @@ def convert(  # noqa: C901
             total = 0
             for name, layer in m.named_children():
                 cur_scope = f"{scope}.{name}"
+                if met_exclude_condition(cur_scope):
+                    continue
                 if not is_container(layer):
                     if mstr(layer) == mstr(layer_type) and met_filter_condition(
                         cur_scope
@@ -160,6 +173,8 @@ def convert(  # noqa: C901
         for name, m in mod.named_children():
             modified = False
             cur_scope = f"{scope}.{name}"
+            if met_exclude_condition(cur_scope):
+                continue
             if not is_container(m):
                 if mstr(m) in weight_counter:
                     if (
@@ -186,6 +201,8 @@ def convert(  # noqa: C901
         for name, m in mod.named_children():
             origin_m = m
             cur_scope = f"{scope}.{name}"
+            if met_exclude_condition(cur_scope):
+                continue
             if (not is_container(m)) or hasattr(m, "_qsparse_conversion"):
                 layer_type = mstr(m)
                 if layer_type in activation_counter:
@@ -226,3 +243,5 @@ def convert(  # noqa: C901
             model.module = apply_to_input(model.module)
     auto_name_prune_quantize_layers(nn_module(model))
     return model
+
+

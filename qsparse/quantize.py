@@ -264,7 +264,7 @@ class QuantizeLayer(nn.Module):
         super().__init__()
         if get_option("log_on_created"):
             logging.info(
-                f"[Quantize{name if name == '' else f' @ {name}'}] bits={bits} channelwise={channelwise} window_size={window_size} timeout={timeout}"
+                f"[Quantize{name if name == '' else f' @ {name}'}] bits={bits} channelwise={channelwise}  timeout={timeout}"
             )
         self.name = name
         self.channelwise = channelwise

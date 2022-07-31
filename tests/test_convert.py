@@ -51,7 +51,7 @@ def test_lenet_convert():
 
     lenet_pruned = convert(
         lenet_float,
-        prune(sparsity=0.5, callback=BanditPruningCallback(exploration_steps=10)),
+        prune(sparsity=0.5, callback=BanditPruningCallback()),
         weight_layers=[nn.Conv2d, nn.Linear],
         activation_layers=[nn.Conv2d, nn.Linear],
         excluded_weight_layer_indexes=pruning_excluded_layers,
@@ -65,9 +65,11 @@ def test_lenet_convert():
         activation_layers=[nn.Conv2d, nn.Linear],
         input=True,  # input layer is quantized
     )
-
-    gt = "Sequential(\n  (0): QuantizeLayer()\n  (1): LeNet(\n    (conv1): Sequential(\n      (0): Conv2d(\n        3, 6, kernel_size=(5, 5), stride=(1, 1)\n        (quantize): QuantizeLayer()\n      )\n      (1): QuantizeLayer()\n    )\n    (conv2): Sequential(\n      (0): Sequential(\n        (0): Conv2d(\n          6, 16, kernel_size=(5, 5), stride=(1, 1)\n          (prune): PruneLayer(\n            (callback): BanditPruningCallback()\n          )\n          (quantize): QuantizeLayer()\n        )\n        (1): PruneLayer(\n          (callback): BanditPruningCallback()\n        )\n      )\n      (1): QuantizeLayer()\n    )\n    (fc1): Sequential(\n      (0): Sequential(\n        (0): Linear(\n          in_features=400, out_features=120, bias=True\n          (prune): PruneLayer(\n            (callback): BanditPruningCallback()\n          )\n          (quantize): QuantizeLayer()\n        )\n        (1): PruneLayer(\n          (callback): BanditPruningCallback()\n        )\n      )\n      (1): QuantizeLayer()\n    )\n    (fc2): Sequential(\n      (0): Sequential(\n        (0): Linear(\n          in_features=120, out_features=84, bias=True\n          (prune): PruneLayer(\n            (callback): BanditPruningCallback()\n          )\n          (quantize): QuantizeLayer()\n        )\n        (1): PruneLayer(\n          (callback): BanditPruningCallback()\n        )\n      )\n      (1): QuantizeLayer()\n    )\n    (fc3): Sequential(\n      (0): Linear(\n        in_features=84, out_features=10, bias=True\n        (quantize): QuantizeLayer()\n      )\n      (1): QuantizeLayer()\n    )\n  )\n)"
-    assert str(lenet_pruned_quantized) == gt
+    dct = dict(lenet_pruned_quantized.named_modules())
+    assert dct['1.fc1.0.0.prune'].__class__.__name__ == "PruneLayer"
+    assert dct['1.fc1.0.0.quantize'].__class__.__name__ == "QuantizeLayer"
+    assert dct['1.fc1.0.1'].__class__.__name__ == "PruneLayer"
+    assert dct['1.fc1.1'].__class__.__name__ == "QuantizeLayer"
 
 
 def test_nop():
@@ -101,7 +103,7 @@ def test_filter():
         )
     )
     converted = convert(
-        net, quantize(bits=8), weight_layers=[nn.Conv2d], filter=["special"]
+        net, quantize(bits=8), weight_layers=[nn.Conv2d], include=["special"]
     )
 
     result = str(converted)
@@ -123,7 +125,22 @@ def test_order():
         net, quantize(bits=8), activation_layers=[nn.Conv2d, nn.Linear], order="pre"
     )
     result = str(converted).lower()
-    assert result.count("quantize") == 2
+    assert result.count("quantizelayer") == 2
     assert result.index("quantize") < result.index("conv2d")
     L = result.index("conv2d")
     assert result[L:].index("linear") > result[L:].index("quantize")
+
+    nested_converted = convert(
+        net, prune(sparsity=0.5), activation_layers=[nn.Conv2d, nn.Linear]
+    )
+    result = str(nested_converted).lower()
+    assert result.index("quantize") < result.index("prune")
+
+
+
+if __name__ == "__main__":
+    test_lenet_convert()
+    test_nop()
+    test_data_parallel()
+    test_filter()
+    test_order()

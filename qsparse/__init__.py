@@ -1,9 +1,7 @@
 # fmt: off
 from qsparse.convert import convert
 from qsparse.fuse import fuse_bn
-from qsparse.quantize import (DecimalOptimizer, ScalerOptimizer,
-                              linear_quantize_callback, quantize,
-                              scaler_quantize_callback)
+from qsparse.quantize import quantize
 from qsparse.sparse import (BanditPruningCallback, MagnitudePruningCallback,
                             UniformPruningCallback, prune)
 from qsparse.util import auto_name_prune_quantize_layers
