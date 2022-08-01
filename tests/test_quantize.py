@@ -6,9 +6,6 @@ import torch.autograd as autograd
 import torch.nn.functional as F
 
 from qsparse import quantize
-from qsparse.quantize import (DecimalOptimizer, ScalerOptimizer,
-                              linear_quantize_callback,
-                              scaler_quantize_callback)
 
 # fmt: on
 

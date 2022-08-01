@@ -1,24 +1,27 @@
 # fmt: off
 import gc
+import os.path as osp
 import math
 import warnings
 from collections import deque
 from typing import Tuple
-
+import warnings
 import numpy as np
+import torch.nn.functional as F
 import torch
+from sklearn.cluster import AgglomerativeClustering
 import torch.nn as nn
 from scipy import optimize
 
-from qsparse.common import (QuantizeCallback, QuantizeOptimizer, TensorOrFloat,
-                            TensorOrInt, ensure_tensor)
+from qsparse.common import (TensorOrFloat, TensorOrInt, ensure_tensor)
 from qsparse.imitation import imitate
-from qsparse.util import get_option, logging, nd_slice
+from qsparse.util import get_option, logging
 
 # fmt: on
 
 
-class LinearQuantization(torch.autograd.Function):
+
+class DecimalQuantization(torch.autograd.Function):
     """Straight-Through Gradient Estimator.
 
     Please look for detailed description on arguments in [linear\_quantize\_callback][qsparse.quantize.linear_quantize_callback].
@@ -70,6 +73,7 @@ class LinearQuantization(torch.autograd.Function):
                 (-limit + ctx.notch) * tof,
                 (limit - 1 + ctx.notch) * tof,
             )
+            v[v != grad_output] = 0  # reset the clampped values to 0
         return (v,) + (None,) * 6
 
 
@@ -95,7 +99,7 @@ class ScalerQuantization(torch.autograd.Function):
         ctx.notch = 1 if flip_axis else 0
         limit = 2.0 ** (bits - 1)
         shape = [1 for _ in input.shape]
-        if isinstance(scaler, torch.Tensor) and sum(scaler.shape) > 1:
+        if isinstance(scaler, torch.Tensor) and math.prod(scaler.shape) > 1:
             assert (
                 len(scaler) == input.shape[channel_index]
             ), "channel of input and decimal must be equal in channel-wise quantization"
@@ -123,25 +127,64 @@ class ScalerQuantization(torch.autograd.Function):
                 (-limit + ctx.notch) * scaler,
                 (limit - 1 + ctx.notch) * scaler,
             )
+            v[v != grad_output] = 0  # reset the clampped values to 0
         return (v,) + (None,) * 6
 
 
 class LineQuantization(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, x: torch.Tensor, bits: int = 8, lines=(-0.1, 0.9)):
-        N = 2**bits
-        x = torch.clamp(x, lines[0], lines[1])
-        step = (lines[1] - lines[0]) / (2**N)
-        qa = ((x - lines[0]) / step).round() * step + lines[0]
-        return qa
+    def forward(ctx, x: torch.Tensor, bits: int = 8, lines=(-0.1, 0.9), channel_index=-1, inplace=False, training=True):
+        with torch.no_grad():
+            N = 2**bits
+            shape = [1] * len(x.shape)
+            if channel_index >= 0:
+                shape[channel_index] = -1
+                assert x.shape[channel_index] == lines.shape[0]
+            assert lines.shape[1] == 2
+            start, end = lines[:, 0].view(shape), lines[:, 1].view(shape)
+            x = torch.clamp(x, start, end)
+            step = (end - start) / N
+            step[step == 0] = 0.0001
+            if not training:
+                qa = (x / step).round()
+                qstart = (start / step).round()
+                qa = (qa - qstart).clamp(0, N-1)
+                qa = (qa + qstart) * step
+                return qa
+            else:
+                if inplace:
+                    x = x - start
+                    x /= step
+                    x = x.round_().clamp_(0, N - 1)
+                    x = x * step
+                    x += start
+                    return x
+                else:
+                    qa = x - start
+                    qa /= step
+                    qa = qa.round_().clamp_(0, N - 1)
+                    qa = qa * step
+                    qa += start
+                    return qa
 
     @staticmethod
     def backward(ctx, grad_output):
-        return (grad_output,) + (None,) * 2
+        return (grad_output,) + (None,) * 5
 
 
 class BaseQuantizer(nn.Module):
     weight_size = 1
+
+    def optimize(self, tensor, bits, weight=None, batched=False, channel_index=-1) -> torch.Tensor:
+        """return weight"""
+        raise NotImplementedError
+
+    def forward(self, tensor, bits, weight=None, batched=False, channel_index=-1) -> torch.Tensor:
+        """return quantized tensor"""
+        raise NotImplementedError
+
+    def get_weight_shape(self, x, channelwise):
+        return (1 if channelwise < 0 else x.shape[channelwise], self.weight_size)
 
 
 class DecimalQuantizer(BaseQuantizer):
@@ -152,38 +195,75 @@ class DecimalQuantizer(BaseQuantizer):
         use_uint: bool = False,
         backward_passthrough: bool = False,
         flip_axis: bool = False,
+        group_num=-1,
+        group_timeout=512
     ):
         super().__init__()
         self.use_uint = use_uint
         self.backward_passthrough = backward_passthrough
         self.flip_axis = flip_axis
-        self.function = LinearQuantization.apply
+        self.use_float_scaler = False
+        self.function = DecimalQuantization.apply
+        self.t = 0
+        self.group_timeout = group_timeout
+        self.groups = None
+        self.group_num = group_num
 
-    def quantize(self, tensor, bits, decimal):
+    def quantize(self, tensor, bits, scaler, channel_index=-1):
+        if self.use_float_scaler:
+            weight = scaler
+        else:
+            weight = (1 / scaler).nan_to_num(posinf=1, neginf=1).log2().round()
         return self.function(
             tensor,
             bits,
-            decimal,
-            -1,
+            weight,
+            channel_index,
             self.use_uint,
             self.backward_passthrough,
             self.flip_axis,
         )
 
-    def forward(self, tensor, bits, decimal, batch_dim=-1):
-        if decimal == 0:
-            with torch.no_grad():
-                err = float("inf")
-                best_n = None
-                for n in range(0, 20):
-                    tensor_q = self.quantize(tensor, bits, decimal)
-                    err_ = torch.sum((tensor - tensor_q) ** 2).item()
-                    if err_ < err:
-                        best_n = n
-                        err = err_
-            if isinstance(decimal, torch.Tensor):
-                decimal.data[:] = best_n
-        return self.quantize(tensor, bits, decimal)
+    def optimize(self, x, bits, weight=None, batched=False, channel_index=-1, **kwargs):
+        with torch.no_grad():
+            x = x.abs()
+            if channel_index == -1:
+                x = x.view(1, -1)
+            elif channel_index != 0:
+                num_channel = x.shape[channel_index]
+                x = x.transpose(0, channel_index)
+                x = x.view(num_channel, -1)
+            else:
+                x = x.view(x.shape[0], -1)
+            new_weight = x.max(dim=1).values / (2 ** (bits - 1))
+            if batched:
+                new_weight = new_weight.mean(dim=0)
+            new_weight = new_weight.view(
+                self.get_weight_shape(x, channel_index))
+        if self.t == 0:
+            weight = new_weight.view(self.get_weight_shape(x, channel_index))
+        else:
+            weight.data[:] = (self.t * weight + new_weight) / (self.t + 1)
+        self.t += 1
+        return weight
+
+    def forward(self, tensor, bits, scaler, channel_index=-1, **kwargs):
+        if self.t >= self.group_timeout and self.group_num > 0 and scaler.numel() > self.group_num:
+            if self.groups is None:
+                logging.danger( f"start to clustering channels into {self.group_num} groups")
+                clustering = AgglomerativeClustering(
+                    n_clusters=self.group_num)
+                clustering.fit(scaler.detach().cpu().numpy())
+                self.groups = nn.Parameter(torch.from_numpy(
+                    clustering.labels_).to(scaler.device), requires_grad=False)
+
+            group_scaler = torch.clone(scaler)
+            for ci in range(self.group_num):
+                ind = self.groups == ci
+                avg = group_scaler[ind].mean(dim=0)
+                group_scaler[ind] = avg
+            scaler = group_scaler
+        return self.quantize(tensor, bits, scaler, channel_index)
 
 
 class ScalerQuantizer(DecimalQuantizer):
@@ -191,56 +271,113 @@ class ScalerQuantizer(DecimalQuantizer):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        self.use_float_scaler = True
         self.function = ScalerQuantization.apply
 
-    def forward(self, tensor, bits, scaler, batch_dim=-1):
-        if scaler == 0:
-            with torch.no_grad():
-                init = tensor.abs().mean().item()
-                x0 = np.array(init)
-
-                def func(x):
-                    tensor_q = self.quantize(tensor, bits, float(x))
-                    return torch.mean((tensor - tensor_q) ** 2).item()
-
-                result = optimize.minimize(func, x0, method="Nelder-Mead")
-                best = abs(float(result.x))
-                scaler.data[:] = best
-        return self.quantize(tensor, bits, scaler)
 
 
-# today just test this
-class AdaptiveLineQuantizer(nn.Module):
+class AdaptiveQuantizer(DecimalQuantizer):
     weight_size = 2
 
-    def __init__(self, alpha=0.1, outlier_ratio=0.0001):
-        super().__init__()
-        self.alpha = alpha
-        self.outlier_ratio = outlier_ratio
+    def __init__(self, running_average=True, **kwargs):
+        super().__init__(**kwargs)
+        self.curr_sample_lines = None
+        self.use_running_average = running_average
 
-    def estimate_bound(self, bound, lower_bound):
-        dist = (bound - lower_bound).abs()
-        flag = ((dist / bound) < 1.1) | (dist < 0.2)
-        v = torch.cat([bound.view(-1, 1), lower_bound.view(-1, 1)], dim=1)
-        return v[torch.cat([~flag.view(-1, 1), flag.view(-1, 1)], dim=1)]
+    def optimize(self, x, bits, weight=None, channel_index=-1, batched=False, **kwargs):
+        batch_size = x.shape[0]
+        with torch.no_grad():
+            if channel_index >= 0:
+                if batched:
+                    if channel_index != 1:
+                        x = x.transpose(1, channel_index)
+                        if mask is not None:
+                            mask = mask.transpose(1, channel_index)
+                    shape = tuple(x.shape)
+                    x = x.view(-1, math.prod(shape[2:]))
+                    if mask is not None:
+                        mask = mask.view(-1, math.prod(shape[2:]))
+                else:
+                    if channel_index != 0:
+                        x = x.transpose(0, channel_index)
+                    shape = tuple(x.shape)
+                    x = x.contiguous().view(-1, math.prod(shape[1:]))
+            else:
+                if batched:
+                    x = x.view(len(x), -1)
+                    if mask is not None:
+                        mask = mask.view(len(x), -1)
+                else:
+                    x = x.view(1, -1)
 
-    def forward(self, tensor, bits, scaler, batch_dim=-1):
+            lb = x.min(dim=1).values
+            ub = x.max(dim=1).values
+            _buf = torch.cat([lb.view(-1, 1), ub.view(-1, 1)], dim=1)
+            _lines = _buf[:len(lb), :]
+
+            if batched:
+                _lines = _lines.view(batch_size, -1, 2)
+                sample_avg_lines = torch.cat([_lines[:, :, 0].min(
+                    dim=0).values.view(-1, 1), _lines[:, :, 1].max(dim=0).values.view(-1, 1)], dim=1).view(-1, 2)
+            else:
+                sample_avg_lines = _lines
+
+            if not self.use_running_average:  # save the lines of current sample
+                self.curr_sample_lines = sample_avg_lines
+
+            if weight is None:
+                self.t = nn.Parameter(torch.zeros(1).to(
+                    x.device), requires_grad=False)
+                self.t += 1
+                return sample_avg_lines
+            else:
+                assert sample_avg_lines.shape == weight.shape
+                self.t += 1
+                return (weight * (self.t - 1) + sample_avg_lines) / self.t
+
+    def forward(self, tensor, bits, running_lines, channel_index=-1, inplace=False):
         origin_shape = tuple(tensor.shape)
-        tensor = tensor.view(1 if batch_dim == -1 else origin_shape[0], -1)
-        if self.training:
-            lb = self.estimate_bound(
-                tensor.quantile(self.outlier_ratio, dim=1), tensor.min(dim=1)
-            )
-            ub = self.estimate_bound(
-                tensor.quantile(1 - self.outlier_ratio, dim=1), tensor.max(dim=1)
-            )
-            scaler.data[0] = scaler.data[0] * (1 - self.alpha) + lb.mean() * self.alpha
-            scaler.data[1] = scaler.data[1] * (1 - self.alpha) + ub.mean() * self.alpha
-            lines = torch.cat([lb.view(1, -1), ub.view(1, -1)], dim=0)
+        if self.training and not self.use_running_average: # training and using lines of current sample
+            assert self.curr_sample_lines is not None, "statistics of current batch is not calculated yet."
+            if channel_index >= 0:  # channelwise
+                if self.curr_sample_lines.shape[0] == origin_shape[channel_index]:  # only channel-wise
+                    result = LineQuantization.apply(
+                        tensor, bits, self.curr_sample_lines, channel_index, inplace, self.training)
+                else: # channel-wise and sample-wise
+                    assert channel_index != 0
+                    if channel_index != 1:
+                        tensor = tensor.transpose(1, channel_index)
+                    tensor = tensor.view(-1, *origin_shape[2:])
+                    assert self.curr_sample_lines.shape[0] == tensor.shape[0]
+                    result = LineQuantization.apply(
+                        tensor, bits, self.curr_sample_lines, 0, inplace, self.training)
+                    if channel_index != 1:
+                        result = result.transpose(1, channel_index)
+            else:
+                result = LineQuantization.apply(
+                    tensor, bits, self.curr_sample_lines, 
+                    0 if self.curr_sample_lines.shape[0] != 1  # sample-wise along the batch dimension
+                    else -1, inplace, self.training)
+            self.curr_sample_lines = None
         else:
-            lines = scaler
-        result = LineQuantization.apply(tensor, bits, lines)
-        return result.view(origin_shape)
+            if self.t >= self.group_timeout and self.group_num > 0:
+                if self.groups is None:
+                    logging.danger(f"start to clustering channels into {self.group_num} groups") 
+                    clustering = AgglomerativeClustering(n_clusters=self.group_num)
+                    clustering.fit(running_lines.detach().cpu().numpy())
+                    self.groups = nn.Parameter(torch.from_numpy(
+                        clustering.labels_).to(running_lines.device), requires_grad=False)
+
+                group_lines = torch.clone(running_lines)
+                for ci in range(self.group_num):
+                    ind = self.groups == ci
+                    avg = group_lines[ind].mean(dim=0)
+                    group_lines[ind] = avg
+                running_lines = group_lines
+            result = LineQuantization.apply(
+                tensor, bits, running_lines, channel_index, inplace, self.training)
+        result = result.view(origin_shape)
+        return result
 
 
 class QuantizeLayer(nn.Module):
@@ -249,34 +386,38 @@ class QuantizeLayer(nn.Module):
     Please look for detailed description in [quantize][qsparse.quantize.quantize]
     """
 
+    def __str__(self):
+        return f"QuantizeLayer(bits={self.bits})"
+
+    def __repr__(self):
+        return str(self)
+
     def __init__(
         self,
         bits: int = 8,
         channelwise: int = 1,
-        # for step-wise training
         timeout: int = 1000,
-        # for customization
         callback: BaseQuantizer = None,
-        # for debug purpose
-        collapse: int = 0,
+        batch_dimension: int = 0,
         name: str = "",
     ):
         super().__init__()
         if get_option("log_on_created"):
             logging.info(
-                f"[Quantize{name if name == '' else f' @ {name}'}] bits={bits} channelwise={channelwise}  timeout={timeout}"
+                f"[Quantize{name if name == '' else f' @ {name}'}] bits={bits} channelwise={channelwise} timeout={timeout}"
             )
         self.name = name
         self.channelwise = channelwise
         self.timeout = timeout
-        self._bits = bits
+        self.bits = bits
         self.callback = callback  # type: BaseQuantizer
-        self._batch_dim = collapse
+        self.batch_dimension = batch_dimension # `batch_dimension == 0` means activation
+        self._quantized = False
 
     @property
     def initted(self) -> bool:
         """whether the parameters of the quantize layer are initialized."""
-        return self._n_updates.item() != -1
+        return hasattr(self, '_n_updates')
 
     def forward(self, x):
         """Quantize input tensor according to given configuration.
@@ -290,8 +431,8 @@ class QuantizeLayer(nn.Module):
         if not self.initted:
             self.weight = nn.Parameter(
                 torch.zeros(
-                    1 if self.channelwise < 0 else len(x.shape[self.channelwise]),
-                    self.callback.weight_dimension,
+                    1 if self.channelwise < 0 else x.shape[self.channelwise],
+                    self.callback.weight_size,
                 ).to(x.device),
                 requires_grad=False,
             )
@@ -299,32 +440,28 @@ class QuantizeLayer(nn.Module):
                 torch.zeros(1, dtype=torch.int).to(x.device),
                 requires_grad=False,
             )
-            self.bits = nn.Parameter(
-                torch.tensor(self._bits, dtype=torch.int).to(x.device),
-                requires_grad=False,
-            )
-        if self._n_updates.item() >= self.timeout:
-            if self.channelwise >= 0:
-                sl = [None] * len(x.shape)
-                slice_shape = list(x.shape)
-                slice_shape[self.channelwise] = 1
-                out = []
-                for i in range(len(x.shape)):
-                    sl[self.channelwise] = i
-                    out.append(
-                        self.callback(
-                            x[sl], self.weight[i], self.bits, batch_dim=self._batch_dim
-                        ).view(slice_shape)
-                    )
-                out = torch.cat(out, dim=self.channelwise)
+
+        t = self._n_updates.item()
+        if self.timeout > 0:
+            if t >= self.timeout:
+                if self.training:
+                    new_weight = self.callback.optimize(x, self.bits, None if t == self.timeout else self.weight, 
+                                                        batched=self.batch_dimension == 0, channel_index=self.channelwise)
+                    if new_weight is not None:
+                        self.weight.data[:] = new_weight
+                    self._quantized = True
+                if self._quantized:
+                    out = self.callback(
+                        x, self.bits, self.weight, channel_index=self.channelwise, inplace=self.batch_dimension == 0)
+                else:
+                    out = x
             else:
-                out = self.callback(
-                    x, self.bits, self.weight[0], batch_dim=self._batch_dim
-                )
+                out = x
+
+            if self.training:
+                self._n_updates += 1
         else:
             out = x
-        if self.training:
-            self._n_updates += 1
         return out
 
 
@@ -332,9 +469,7 @@ def quantize(
     inp: nn.Module = None,
     bits: int = 8,
     channelwise: int = 1,
-    # for step-wise training
     timeout: int = 1000,
-    # for customization
     callback: BaseQuantizer = None,
     # for bias quantization, default to -1 is to not quantize bias
     bias_bits: int = -1,
@@ -350,18 +485,14 @@ def quantize(
         bits (int, optional): bitwidth for weight. Defaults to 8.
         channelwise (int, optional): dimension index for channel. Defaults to 1. When channelwise >= 0, channel-wise quantization is enabled. When set to -1, channel-wise quantization is disabled.
         timeout (int, optional): the steps to compute the best decimal bits. Defaults to 1000.
-        interval (int, optional): interval of steps before each time to compute the best decimal bits. Defaults to -1, means only calculating the decimal bits once.
-        window_size (int, optional): number of tensors used for computing the decimal bits. Defaults to 1.
-        on_device_window (bool, optional): whether keep the tensor window on gpu device being used, or move to cpu. Default to False, means moving to cpu.
-        optimizer (QuantizeOptimizer, optional): optimizer used to compute the best quantization weight. Defaults to `DecimalOptimizer()`.
-        callback (QuantizeCallback, optional):  callback for actual operation of quantizing tensor, used for customization. Defaults to [linear\_quantize\_callback][qsparse.quantize.linear_quantize_callback].
+        callback (BaseQuantizer, optional):  callback module for actual operation of quantizing tensor and finding quantization parameters. Defaults to [ScalerQuantizer][qsparse.quantize.ScalerQuantizer].
         bias_bits (int, optional): bitwidth for bias. Defaults to -1, means not quantizing bias.
         name (str, optional): name of the quantize layer created, used for better logging. Defaults to "".
 
     Returns:
         nn.Module: input module with its weight quantized or a instance of [QuantizeLayer][qsparse.quantize.QuantizeLayer] for feature quantization
     """
-    callback = callback or DecimalQuantizer()
+    callback = callback or ScalerQuantizer()
 
     kwargs = dict(
         bits=bits,
@@ -369,20 +500,21 @@ def quantize(
         timeout=timeout,
         callback=callback,
         bias_bits=bias_bits,
-        name=name,
+        name=name
     )
 
-    def get_quantize_layer(feature_collapse=0, is_bias=False):
+    def get_quantize_layer(batch_dimension=0, is_bias=False):
         if bias_bits == -1 and is_bias:
             return lambda a: a
         else:
             return QuantizeLayer(
                 bits=bias_bits if is_bias else bits,
-                channelwise=(0 if channelwise >= 0 else -1) if is_bias else channelwise,
+                channelwise=(0 if channelwise >= 0 else
+                             - 1) if is_bias else channelwise,
                 timeout=int(timeout),
                 callback=callback,
                 name=name,
-                collapse=feature_collapse,
+                batch_dimension=batch_dimension
             )
 
     if inp is None:

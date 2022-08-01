@@ -7,7 +7,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from qsparse import convert, prune, quantize
-from qsparse.sparse import BanditPruningCallback
+from qsparse.sparse import MagnitudePruningCallback 
 
 
 class LeNet(nn.Module):
@@ -51,7 +51,7 @@ def test_lenet_convert():
 
     lenet_pruned = convert(
         lenet_float,
-        prune(sparsity=0.5, callback=BanditPruningCallback()),
+        prune(sparsity=0.5, callback=MagnitudePruningCallback()),
         weight_layers=[nn.Conv2d, nn.Linear],
         activation_layers=[nn.Conv2d, nn.Linear],
         excluded_weight_layer_indexes=pruning_excluded_layers,

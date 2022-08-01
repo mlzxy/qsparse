@@ -59,22 +59,6 @@ def auto_name_prune_quantize_layers(net: nn.Module) -> nn.Module:
     return net
 
 
-def nd_slice(d: int, dim: int = 0, start: int = 0, end: int = 1) -> List[slice]:
-    """Create a multi-dimensional slice.
-
-    Args:
-        d (int): number of dimensions
-        dim (int, optional): target dimension that will be sliced. Defaults to 0.
-        start (int, optional): start index in the target dimension. Defaults to 0.
-        end (int, optional): end index in the target dimension. Defaults to 1.
-
-    Returns:
-        List[slice]: multi-dimensional slice
-    """
-    indexes = [slice(None)] * d
-    indexes[dim] = slice(start, end)
-    return indexes
-
 
 def nn_module(mod: nn.Module) -> nn.Module:
     """Return actual module of a `nn.Module` or `nn.DataParallel`.
@@ -91,8 +75,8 @@ def nn_module(mod: nn.Module) -> nn.Module:
         return mod
 
 
-def align_tensor_to_shape(x: torch.Tensor, shape: List[int]) -> torch.Tensor:
-    """align a tensor to a given shape through averaging.
+def squeeze_tensor_to_shape(x: torch.Tensor, shape: List[int]) -> torch.Tensor:
+    """squeeze a tensor to a given shape through averaging.
 
     Args:
         x (torch.Tensor): input tensor
@@ -112,6 +96,26 @@ def align_tensor_to_shape(x: torch.Tensor, shape: List[int]) -> torch.Tensor:
             else:
                 raise ValueError("mismatch between the input tensor and mask")
     return x
+
+
+
+def calculate_mask_given_importance(importance: torch.Tensor, sparsity: float) -> torch.Tensor:
+    """return a binary torch tensor with sparsity equals to the given sparsity. 
+
+    Args:
+        importance (torch.Tensor): Floating-point tensor represents importance.
+        sparsity (float): sparsity level in `[0, 1]`
+
+    Returns:
+        torch.Tensor: binary mask
+    """
+    values = importance.flatten().sort()[0]
+    n = len(values)
+    idx = max(int(sparsity * n - 1), 0)
+    threshold = values[idx + 1]
+    return importance >= threshold
+
+
 
 
 def log_functor(name: str):

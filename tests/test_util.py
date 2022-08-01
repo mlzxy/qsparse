@@ -6,10 +6,9 @@ import numpy as np
 import torch
 import torch.nn as nn
 
-from qsparse import (auto_name_prune_quantize_layers, get_qsparse_option,
+from qsparse import (auto_name_prune_quantize_layers, get_qsparse_option, 
                      prune, quantize, set_qsparse_options)
-from qsparse.quantize import approx_quantile
-
+from qsparse.util import squeeze_tensor_to_shape, calculate_mask_given_importance
 # fmt: on
 
 
@@ -33,13 +32,9 @@ def test_auto_name_prune_quantize_layers():
     assert net.linear2.quantize.name == "linear2.quantize"
 
 
-def test_approx_quantile():
-    data = torch.rand((1000,))
-    accurate = torch.quantile(data, 0.5)
-    approximate = approx_quantile(
-        data, 0.5, bound=500
-    )  # use a small bound to trigger approximate quantile computation
-    assert np.isclose(accurate, approximate, rtol=0.05)
+
+
+
 
 
 def test_option(capsys):
@@ -72,3 +67,19 @@ def test_option(capsys):
     captured = open(fpath).read()
     assert "[Prune" not in captured
     assert "[Quantize" not in captured
+
+
+
+def test_squeeze_tensor_to_shape():
+    tensor = torch.rand(10,30,7,8)
+    target_shape = (1, 30, 7, 1)
+    assert tuple(squeeze_tensor_to_shape(tensor, target_shape).shape) == target_shape
+
+
+
+def test_calculate_mask_given_importance():
+    tensor = torch.rand(10,30,7,8)
+    target_sparsity = 0.47
+    mask = calculate_mask_given_importance(tensor, target_sparsity)
+    assert (1 - mask.sum().item() / mask.numel()) == target_sparsity
+    

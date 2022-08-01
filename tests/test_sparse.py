@@ -7,8 +7,7 @@ import torch
 import torch.nn as nn
 
 from qsparse import prune
-from qsparse.sparse import (BanditPruningCallback, MagnitudePruningCallback,
-                            UniformPruningCallback)
+from qsparse.sparse import (MagnitudePruningCallback, UniformPruningCallback)
 
 # fmt: on
 
