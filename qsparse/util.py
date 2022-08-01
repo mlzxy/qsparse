@@ -117,7 +117,6 @@ def calculate_mask_given_importance(importance: torch.Tensor, sparsity: float) -
 
 
 
-
 def log_functor(name: str):
     def log(msg: str):
         root = logging_module.root
@@ -136,5 +135,6 @@ class logging:
     warn = log_functor("warn")
     warning = log_functor("warning")
     error = log_functor("error")
+    danger = log_functor("error")
     exception = log_functor("exception")
     debug = log_functor("debug")

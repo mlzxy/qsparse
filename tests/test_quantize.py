@@ -6,6 +6,8 @@ import torch.autograd as autograd
 import torch.nn.functional as F
 
 from qsparse import quantize
+from qsparse.quantize import quantize_with_decimal, quantize_with_scaler, quantize_with_line
+from qsparse.quantize import DecimalQuantizer, ScalerQuantizer, AdaptiveQuantizer
 
 # fmt: on
 
@@ -13,25 +15,16 @@ from qsparse import quantize
 def test_feature():
     data = (torch.rand((1, 10, 32, 32)) - 0.5) * 4
     timeout = 5
-    quantize_layer = quantize(bits=8, timeout=timeout, channelwise=-1)
+    quantize_layer = quantize(bits=8, timeout=timeout, channelwise=-1, callback=DecimalQuantizer())
     for _ in range(timeout + 1):  # ensure the quantization has been triggered
         output = quantize_layer(data).numpy()
 
-    output_ref = linear_quantize_callback(
-        data, bits=8, decimal=quantize_layer.weight
+    output_ref = quantize_with_decimal(
+        data, bits=8, 
+        decimal=(1 / quantize_layer.weight).nan_to_num(posinf=1, neginf=1).log2().round(), 
+        channel_index=-1
     ).numpy()
-    assert quantize_layer.weight.item() == 6
     assert np.all(output == output_ref)
-
-    saturate_quantize_layer = quantize(
-        bits=8,
-        timeout=timeout,
-        optimizer=DecimalOptimizer(saturate_range=(0.3, 0.7)),
-        channelwise=-1,
-    )
-    for _ in range(timeout + 1):  # ensure the quantization has been triggered
-        saturate_quantize_layer(data)
-    assert saturate_quantize_layer.weight.item() == 7
 
 
 def test_weight():
@@ -43,86 +36,38 @@ def test_weight():
         bits=8,
         bias_bits=8,
         timeout=timeout,
-        on_device_window=True,
+        callback=ScalerQuantizer(),
+        channelwise=0
     )
     qconv.train()
     for _ in range(timeout + 1):
         qconv(data)
 
     assert (
-        qconv.weight.detach().numpy()
-        - linear_quantize_callback(qconv.weight, 8, qconv.quantize.weight)
-        .detach()
-        .numpy()
-    ).sum() == 0, "weight shall be fully quantized"
+        qconv.weight - quantize_with_scaler(qconv._parameters["weight"], 8, qconv.quantize.weight, channel_index=0)
+    ).sum().item() == 0, "weight shall be fully quantized"
     assert (
-        qconv.bias.detach().numpy()
-        - linear_quantize_callback(
-            qconv.bias, 8, qconv.quantize_bias.weight, channel_index=0
+        qconv.bias - quantize_with_scaler(
+            qconv._parameters["bias"], 8, qconv.quantize_bias.weight, channel_index=0
         )
-        .detach()
-        .numpy()
-    ).sum() == 0, "bias shall be fully quantized"
+    ).sum().item() == 0, "bias shall be fully quantized"
 
     assert (
-        dict(qconv.named_parameters())["weight"].detach().numpy()
-        - qconv.weight.detach().numpy()
-    ).sum() != 0, (
+       qconv._parameters["weight"] - qconv.weight
+    ).sum().item() != 0, (
         "parameter['weight'] shall store the untouched weight with full precision"
     )
 
-    qconv = quantize(torch.nn.Conv2d(10, 30, 3), bits=8, timeout=timeout)
+    qconv = quantize(torch.nn.Conv2d(10, 30, 3), bits=8, timeout=timeout, channelwise=0, callback=ScalerQuantizer())
     qconv.eval()
     for _ in range(timeout * 2):
         qconv(data)
     assert (
-        qconv.weight.detach().numpy()
-        - linear_quantize_callback(qconv.weight, 8, qconv.quantize.weight)
-        .detach()
-        .numpy()
-    ).sum() != 0, "quantization schedule shall only be triggered during training"
+        qconv.weight - quantize_with_scaler(qconv._parameters["weight"], 8, qconv.quantize.weight, channel_index=0)
+    ).sum().item() != 0, "quantization schedule shall only be triggered during training"
 
     with pytest.raises(ValueError):  # shall only accept module input or no input
         quantize(torch.rand((10,)))
-
-
-def test_callback():
-    # scalar quantization
-    data = torch.rand(10, 3, 32, 32)
-    qdata = linear_quantize_callback(data, bits=8, decimal=7)
-    assert np.allclose(data.numpy(), qdata.numpy(), atol=1 / 2 ** 7)
-
-    data = torch.rand(10, 3, 32, 32)
-    qdata = scaler_quantize_callback(data, bits=8, scaler=0.01)
-    assert np.allclose(data.numpy(), qdata.numpy(), atol=1 / 2 ** 7)
-
-    # vector quantization
-    for i in range(1, 4):
-        decimals = torch.randint(1, 7, (data.shape[i],))
-        qdata = linear_quantize_callback(
-            data, bits=8, decimal=decimals, channel_index=i
-        )
-        for j in range(data.shape[i]):
-            indices = [
-                slice(None),
-            ] * 4
-            indices[i] = j
-            assert np.allclose(
-                data[indices].numpy(),
-                qdata[indices].numpy(),
-                atol=1 / 2 ** decimals[j].item(),
-            )
-
-        scaler = torch.rand(data.shape[i]) + 1 / 128
-        qdata = scaler_quantize_callback(data, bits=8, scaler=scaler, channel_index=i)
-        for j in range(data.shape[i]):
-            indices = [
-                slice(None),
-            ] * 4
-            indices[i] = j
-            assert np.allclose(
-                data[indices].numpy(), qdata[indices].numpy(), atol=scaler[j].item()
-            )
 
 
 def test_integer_arithmetic():
@@ -134,19 +79,20 @@ def test_integer_arithmetic():
     timeout = 5
     # quantized output in 32-bit float
     qconv = quantize(
-        torch.nn.Conv2d(10, 30, 3, bias=False), bits=8, timeout=timeout, channelwise=0
+        torch.nn.Conv2d(10, 30, 3, bias=False), bits=8, timeout=timeout, channelwise=0, callback=DecimalQuantizer()
     )  # vector quantization on output channel
     qconv.train()
     for _ in range(timeout + 1):  # ensure the quantization has been triggered
         qconv(input_float)
-    output_float = linear_quantize_callback(qconv(input_float), 8, no)
+    output_float = quantize_with_decimal(qconv(input_float), 8, no)
 
     # quantized output in 8-bit integer
-    weight = qconv.weight * (2.0 ** qconv.quantize.weight).view(-1, 1, 1, 1)
+    decimal = (1 / qconv.quantize.weight).nan_to_num(posinf=1, neginf=1).log2().round().int()
+    weight = qconv.weight * (2.0 ** decimal).view(-1, 1, 1, 1)
     output_int = F.conv2d(input.int(), weight.int())
     for i in range(output_int.shape[1]):
         output_int[:, i] = (
-            output_int[:, i].float() / 2 ** (ni + qconv.quantize.weight[i] - no)
+            output_int[:, i].float() / 2 ** (ni + decimal[i] - no)
         ).int()
 
     diff = (
@@ -155,46 +101,37 @@ def test_integer_arithmetic():
     assert np.all(diff == 0), "shall be able to fully match with integer arithmetic"
 
 
-def test_non_channelwise():
+def test_adaptive_quantization():
+    data = (torch.rand((1, 10, 32, 32)) - 0.5) * 4
     timeout = 5
-    data = torch.rand((1, 10, 32, 32))
+    quantize_layer = quantize(bits=8, timeout=timeout, channelwise=-1, callback=AdaptiveQuantizer())
+    for _ in range(timeout + 1):  # ensure the quantization has been triggered
+        output = quantize_layer(data).numpy()
 
-    qconv = quantize(
-        torch.nn.Conv2d(10, 30, 3), bits=8, bias_bits=8, timeout=timeout, channelwise=-1
-    )
-    qconv.train()
-    for _ in range(timeout + 1):
-        qconv(data)
-
-    assert qconv.quantize.weight.shape.numel() == 1
-    assert qconv.quantize_bias.weight.shape.numel() == 1
+    output_ref = quantize_with_line(
+        data, bits=8, 
+        lines=quantize_layer.weight,
+        channel_index=-1
+    ).numpy()
+    assert np.all(output == output_ref)
 
 
-def test_scaler_quantization():
-    inp = torch.rand(3, 24, 24, requires_grad=True)
-    out = scaler_quantize_callback(inp, backward_passthrough=True)
-    out_grad = torch.rand(3, 24, 24) * 10000
-    out.backward(gradient=out_grad)
-    assert np.allclose(inp.grad.numpy(), out_grad.numpy())
+def test_groupwise_quantization():
+    data = (torch.rand((64, 10, 32, 32)) - 0.5) * 4
+    timeout = 5
+    quantize_layer = quantize(bits=8, timeout=timeout, channelwise=1, callback=AdaptiveQuantizer(group_num=4, group_timeout=20))
+    for _ in range(timeout + 30):  # ensure the quantization has been triggered
+        output = quantize_layer(data).numpy()
+        
+    group_weight = torch.clone(quantize_layer.weight)
+    for ci in range(4):
+        ind = quantize_layer.callback.groups == ci
+        avg = group_weight[ind].mean(dim=0)
+        group_weight[ind] = avg
 
-    inp = torch.rand(3, 24, 24, requires_grad=True)
-    out = linear_quantize_callback(inp, backward_passthrough=True)
-    out_grad = torch.rand(3, 24, 24) * 10000
-    out.backward(gradient=out_grad)
-    assert np.allclose(inp.grad.numpy(), out_grad.numpy())
-
-    inp = torch.rand(3, 24, 24, requires_grad=True) * 100
-    out_uintq = scaler_quantize_callback(inp, use_uint=True)
-    out_q = scaler_quantize_callback(inp, use_uint=False)
-    assert ((inp - out_uintq) ** 2).sum().item() < ((inp - out_q) ** 2).sum().item()
-
-    out_uintq = scaler_quantize_callback(inp, flip_axis=True)
-    out_q = scaler_quantize_callback(inp, flip_axis=False)
-    assert ((inp - out_uintq) ** 2).sum().item() < ((inp - out_q) ** 2).sum().item()
-
-    inp = torch.rand(3, 24, 24, requires_grad=True)
-    out_q = scaler_quantize_callback(inp, 8)
-    opt = ScalerOptimizer()
-    best_scaler = opt(inp, 8, 0.1, scaler_quantize_callback)
-    out_q_opt = scaler_quantize_callback(inp, 8, best_scaler)
-    assert ((inp - out_q_opt) ** 2).sum().item() < ((inp - out_q) ** 2).sum().item()
+    output_ref = quantize_with_line(
+        data, bits=8, 
+        lines=group_weight,
+        channel_index=1
+    ).numpy()
+    assert np.all(output == output_ref)

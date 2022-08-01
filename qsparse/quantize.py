@@ -45,7 +45,7 @@ class DecimalQuantization(torch.autograd.Function):
         tof = 2.0**-decimal
         toi = 2.0**decimal
         shape = [1 for _ in input.shape]
-        if isinstance(decimal, torch.Tensor) and sum(decimal.shape) > 1:
+        if isinstance(decimal, torch.Tensor) and decimal.numel() > 1:
             assert (
                 len(decimal) == input.shape[channel_index]
             ), "channel of input and decimal must be equal in channel-wise quantization"
@@ -133,7 +133,13 @@ class ScalerQuantization(torch.autograd.Function):
 
 class LineQuantization(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, x: torch.Tensor, bits: int = 8, lines=(-0.1, 0.9), channel_index=-1, inplace=False, training=True):
+    def forward(ctx, 
+                x: torch.Tensor, 
+                bits: int = 8, 
+                lines=(-0.1, 0.9), 
+                channel_index=-1, 
+                inplace=False, 
+                float_zero_point=True):
         with torch.no_grad():
             N = 2**bits
             shape = [1] * len(x.shape)
@@ -145,7 +151,7 @@ class LineQuantization(torch.autograd.Function):
             x = torch.clamp(x, start, end)
             step = (end - start) / N
             step[step == 0] = 0.0001
-            if not training:
+            if not float_zero_point:
                 qa = (x / step).round()
                 qstart = (start / step).round()
                 qa = (qa - qstart).clamp(0, N-1)
@@ -170,6 +176,35 @@ class LineQuantization(torch.autograd.Function):
     @staticmethod
     def backward(ctx, grad_output):
         return (grad_output,) + (None,) * 5
+
+
+def quantize_with_decimal(
+        input: torch.Tensor,
+        bits: int = 8,
+        decimal: TensorOrInt = 5,
+        channel_index: int = 1,
+        use_uint: bool = False,
+        backward_passthrough: bool = False,
+        flip_axis: bool = False):
+    return DecimalQuantization.apply(input, bits, decimal, channel_index, use_uint, backward_passthrough, flip_axis)
+
+def quantize_with_scaler(
+        input: torch.Tensor,
+        bits: int = 8,
+        scaler: TensorOrFloat = 0.1,
+        channel_index: int = 1,
+        use_uint: bool = False,
+        backward_passthrough: bool = False,
+        flip_axis: bool = False):
+    return ScalerQuantization.apply(input, bits, scaler, channel_index, use_uint, backward_passthrough, flip_axis)
+
+def quantize_with_line(x: torch.Tensor, 
+                bits: int = 8, 
+                lines=(-0.1, 0.9), 
+                channel_index=-1, 
+                inplace=False, 
+                float_zero_point=True):
+    return LineQuantization.apply(x, bits, lines, channel_index, inplace, float_zero_point)
 
 
 class BaseQuantizer(nn.Module):
@@ -209,7 +244,7 @@ class DecimalQuantizer(BaseQuantizer):
         self.groups = None
         self.group_num = group_num
 
-    def quantize(self, tensor, bits, scaler, channel_index=-1):
+    def quantize(self, tensor, bits, scaler, channel_index=-1, **kwargs):
         if self.use_float_scaler:
             weight = scaler
         else:
@@ -232,7 +267,10 @@ class DecimalQuantizer(BaseQuantizer):
             elif channel_index != 0:
                 num_channel = x.shape[channel_index]
                 x = x.transpose(0, channel_index)
-                x = x.view(num_channel, -1)
+                if x.contiguous():
+                    x = x.view(num_channel, -1)
+                else:
+                    x = x.reshape(num_channel, -1)
             else:
                 x = x.view(x.shape[0], -1)
             new_weight = x.max(dim=1).values / (2 ** (bits - 1))
@@ -263,7 +301,7 @@ class DecimalQuantizer(BaseQuantizer):
                 avg = group_scaler[ind].mean(dim=0)
                 group_scaler[ind] = avg
             scaler = group_scaler
-        return self.quantize(tensor, bits, scaler, channel_index)
+        return self.quantize(tensor, bits, scaler, channel_index, **kwargs)
 
 
 class ScalerQuantizer(DecimalQuantizer):
@@ -275,14 +313,15 @@ class ScalerQuantizer(DecimalQuantizer):
         self.function = ScalerQuantization.apply
 
 
-
 class AdaptiveQuantizer(DecimalQuantizer):
     weight_size = 2
 
-    def __init__(self, running_average=True, **kwargs):
-        super().__init__(**kwargs)
-        self.curr_sample_lines = None
-        self.use_running_average = running_average
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.function = LineQuantization.apply
+
+    def quantize(self, tensor, bits, lines, channel_index=-1, **kwargs):
+        return self.function(tensor, bits, lines, channel_index, kwargs.get("inplace", False), self.training)
 
     def optimize(self, x, bits, weight=None, channel_index=-1, batched=False, **kwargs):
         batch_size = x.shape[0]
@@ -291,24 +330,15 @@ class AdaptiveQuantizer(DecimalQuantizer):
                 if batched:
                     if channel_index != 1:
                         x = x.transpose(1, channel_index)
-                        if mask is not None:
-                            mask = mask.transpose(1, channel_index)
                     shape = tuple(x.shape)
                     x = x.view(-1, math.prod(shape[2:]))
-                    if mask is not None:
-                        mask = mask.view(-1, math.prod(shape[2:]))
                 else:
                     if channel_index != 0:
                         x = x.transpose(0, channel_index)
                     shape = tuple(x.shape)
                     x = x.contiguous().view(-1, math.prod(shape[1:]))
             else:
-                if batched:
-                    x = x.view(len(x), -1)
-                    if mask is not None:
-                        mask = mask.view(len(x), -1)
-                else:
-                    x = x.view(1, -1)
+                x = x.view(len(x) if batched else 1, -1)
 
             lb = x.min(dim=1).values
             ub = x.max(dim=1).values
@@ -322,9 +352,6 @@ class AdaptiveQuantizer(DecimalQuantizer):
             else:
                 sample_avg_lines = _lines
 
-            if not self.use_running_average:  # save the lines of current sample
-                self.curr_sample_lines = sample_avg_lines
-
             if weight is None:
                 self.t = nn.Parameter(torch.zeros(1).to(
                     x.device), requires_grad=False)
@@ -335,49 +362,6 @@ class AdaptiveQuantizer(DecimalQuantizer):
                 self.t += 1
                 return (weight * (self.t - 1) + sample_avg_lines) / self.t
 
-    def forward(self, tensor, bits, running_lines, channel_index=-1, inplace=False):
-        origin_shape = tuple(tensor.shape)
-        if self.training and not self.use_running_average: # training and using lines of current sample
-            assert self.curr_sample_lines is not None, "statistics of current batch is not calculated yet."
-            if channel_index >= 0:  # channelwise
-                if self.curr_sample_lines.shape[0] == origin_shape[channel_index]:  # only channel-wise
-                    result = LineQuantization.apply(
-                        tensor, bits, self.curr_sample_lines, channel_index, inplace, self.training)
-                else: # channel-wise and sample-wise
-                    assert channel_index != 0
-                    if channel_index != 1:
-                        tensor = tensor.transpose(1, channel_index)
-                    tensor = tensor.view(-1, *origin_shape[2:])
-                    assert self.curr_sample_lines.shape[0] == tensor.shape[0]
-                    result = LineQuantization.apply(
-                        tensor, bits, self.curr_sample_lines, 0, inplace, self.training)
-                    if channel_index != 1:
-                        result = result.transpose(1, channel_index)
-            else:
-                result = LineQuantization.apply(
-                    tensor, bits, self.curr_sample_lines, 
-                    0 if self.curr_sample_lines.shape[0] != 1  # sample-wise along the batch dimension
-                    else -1, inplace, self.training)
-            self.curr_sample_lines = None
-        else:
-            if self.t >= self.group_timeout and self.group_num > 0:
-                if self.groups is None:
-                    logging.danger(f"start to clustering channels into {self.group_num} groups") 
-                    clustering = AgglomerativeClustering(n_clusters=self.group_num)
-                    clustering.fit(running_lines.detach().cpu().numpy())
-                    self.groups = nn.Parameter(torch.from_numpy(
-                        clustering.labels_).to(running_lines.device), requires_grad=False)
-
-                group_lines = torch.clone(running_lines)
-                for ci in range(self.group_num):
-                    ind = self.groups == ci
-                    avg = group_lines[ind].mean(dim=0)
-                    group_lines[ind] = avg
-                running_lines = group_lines
-            result = LineQuantization.apply(
-                tensor, bits, running_lines, channel_index, inplace, self.training)
-        result = result.view(origin_shape)
-        return result
 
 
 class QuantizeLayer(nn.Module):
@@ -445,7 +429,7 @@ class QuantizeLayer(nn.Module):
         if self.timeout > 0:
             if t >= self.timeout:
                 if self.training:
-                    new_weight = self.callback.optimize(x, self.bits, None if t == self.timeout else self.weight, 
+                    new_weight = self.callback.optimize(x, self.bits, self.weight, 
                                                         batched=self.batch_dimension == 0, channel_index=self.channelwise)
                     if new_weight is not None:
                         self.weight.data[:] = new_weight
