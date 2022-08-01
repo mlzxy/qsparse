@@ -14,10 +14,6 @@ from qsparse.imitation import imitate
 from qsparse.util import squeeze_tensor_to_shape, calculate_mask_given_importance, get_option, logging
 
 
-
-
-
-
 class MagnitudePruningCallback(nn.Module):
     def __init__(
         self,
@@ -140,16 +136,18 @@ class UniformPruningCallback(MagnitudePruningCallback):
     def prune_and_update_mask(
         self, x: torch.Tensor, sparsity: float, mask: torch.Tensor
     ) -> torch.Tensor:
+        if sparsity == 0.5:
+            print(None)
         cur_sparsity = (~mask).sum().item() / mask.numel()
         if cur_sparsity > sparsity:
             logging.warning("sparsity is decreasing, which shall not happen")
-        budget = int((sparsity - cur_sparsity) * np.prod(mask.shape))
+        budget = int(round((sparsity - cur_sparsity) * np.prod(mask.shape)))
         slots = mask.nonzero(as_tuple=True)
         selected_indexes = np.random.choice(
             range(len(slots[0])), size=budget, replace=False
         )
         mask.data[[slot[selected_indexes] for slot in slots]] = False
-        return self.broadcast_mul(x, mask)
+        return x * mask
 
 
 
@@ -160,7 +158,7 @@ class PruneLayer(nn.Module):
     """
 
     def __str__(self):
-        return f"PruneLayer(sparsity={self.sparsity})"
+        return f"PruneLayer(sparsity={self.sparsity}, start={self.start})"
 
     def __repr__(self):
         return str(self)
