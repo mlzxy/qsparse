@@ -104,16 +104,27 @@ def test_integer_arithmetic():
 def test_adaptive_quantization():
     data = (torch.rand((1, 10, 32, 32)) - 0.5) * 4
     timeout = 5
-    quantize_layer = quantize(bits=8, timeout=timeout, channelwise=-1, callback=AdaptiveQuantizer())
+    quantize_layer = quantize(bits=8, timeout=timeout, channelwise=1, callback=AdaptiveQuantizer())
     for _ in range(timeout + 1):  # ensure the quantization has been triggered
         output = quantize_layer(data).numpy()
 
     output_ref = quantize_with_line(
         data, bits=8, 
         lines=quantize_layer.weight,
-        channel_index=-1
+        channel_index=1
     ).numpy()
     assert np.all(output == output_ref)
+
+    quantize_layer.eval()
+    output = quantize_layer(data).numpy()
+    output_ref = quantize_with_line(
+        data, bits=8, 
+        lines=quantize_layer.weight,
+        channel_index=1,
+        float_zero_point=False
+    ).numpy()
+    assert np.all(output == output_ref)
+
 
 
 def test_groupwise_quantization():

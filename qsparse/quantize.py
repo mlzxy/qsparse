@@ -267,10 +267,7 @@ class DecimalQuantizer(BaseQuantizer):
             elif channel_index != 0:
                 num_channel = x.shape[channel_index]
                 x = x.transpose(0, channel_index)
-                if x.contiguous():
-                    x = x.view(num_channel, -1)
-                else:
-                    x = x.reshape(num_channel, -1)
+                x = x.contiguous().view(num_channel, -1)
             else:
                 x = x.view(x.shape[0], -1)
             new_weight = x.max(dim=1).values / (2 ** (bits - 1))
