@@ -1,106 +1,45 @@
 from __future__ import print_function
 import argparse
+from calendar import EPOCH
+from re import M
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.nn.modules.module import T
 import torch.optim as optim
 import sys
 
 from torchvision import datasets, transforms
 from torch.optim.lr_scheduler import StepLR
-from qsparse import prune, quantize
-from qsparse.util import auto_name_prune_quantize_layers
-from enum import Enum
+from qsparse import prune, quantize, devise_layerwise_pruning_schedule, convert
 
-
-def identity(x):
-    return x
-
-
-def create_p_q(train_mode, epoch_size):
-    def bypass(*args):
-        if len(args) == 0:
-            return identity
-        else:
-            return args[0]
-
-    quantize_first = train_mode.startswith("quantize")
-    if "bs" in train_mode:
-        bs = int(train_mode[train_mode.find("bs") + 2 :])
-    else:
-        bs = 8
-
-    def q(*args, c=0):
-        if "quantize" in train_mode:
-            return (
-                quantize(
-                    timeout=epoch_size * (3 if quantize_first else 7),
-                    channelwise=-1,
-                    decimal_range=(1, 7),
-                    window_size=bs,
-                )
-                if len(args) == 0
-                else quantize(
-                    args[0],
-                    timeout=epoch_size * (2 if quantize_first else 6),
-                    channelwise=c or 1,
-                    bias_bits=20,
-                )
-            )
-        else:
-            return bypass(*args)
-
-    def p(*args):
-        kw = {
-            "start": epoch_size * (4 if quantize_first else 2),
-            "interval": epoch_size * 1,
-            "repetition": 3,
-            "sparsity": 0.5,
-        }
-        if "weight" in train_mode:
-            return identity if len(args) == 0 else prune(args[0], **kw)
-        elif "feat" in train_mode:
-            return prune(**kw, window_size=bs) if len(args) == 0 else args[0]
-        else:
-            return bypass(*args)
-
-    return p, q
 
 
 class Net(nn.Module):
-    def __init__(self, train_mode="float", epoch_size=-1):
+    def __init__(self):
         super(Net, self).__init__()
-        p, q = create_p_q(train_mode, epoch_size)
+        self.conv_part = nn.Sequential(
+            nn.Conv2d(1, 32, 3, 1),
+            nn.BatchNorm2d(32),
+            nn.ReLU(),
+            nn.Conv2d(32, 64, 3, 1),
+            nn.BatchNorm2d(64),
+            nn.ReLU(),
+            nn.MaxPool2d(2),
+            nn.Dropout(0.25),
 
-        self.qin = q()
-
-        self.conv1 = q(nn.Conv2d(1, 32, 3, 1))
-        self.bn1 = nn.BatchNorm2d(32)
-        self.p1, self.q1 = p(), q()
-
-        self.conv2 = q(p(nn.Conv2d(32, 64, 3, 1)))
-        self.bn2 = nn.BatchNorm2d(64)
-        self.p2, self.q2 = p(), q()
-
-        self.fc1 = q(p(nn.Linear(9216, 128)), c=-1)
-        self.bn3 = nn.BatchNorm1d(128)
-        self.p3, self.q3 = p(), q()
-
-        self.fc2 = q(nn.Linear(128, 10), c=-1)
-        self.dropout1 = nn.Dropout(0.25)
-        self.dropout2 = nn.Dropout(0.5)
+        )
+        self.linear_part = nn.Sequential(
+            nn.Flatten(),
+            nn.Linear(9216, 128),
+            nn.BatchNorm1d(128),
+            nn.ReLU(),
+            nn.Dropout(0.5),
+            nn.Linear(128, 10)
+        )
 
     def forward(self, x):
-        x = self.qin(x)
-        x = F.relu(self.q1(self.p1(self.bn1(self.conv1(x)))))
-        x = F.relu(self.q2(self.p2(self.bn2(self.conv2(x)))))
-        x = F.max_pool2d(x, 2)
-        x = self.dropout1(x)
-        x = torch.flatten(x, 1)
-        x = F.relu(self.q3(self.p3(self.bn3(self.fc1(x)))))
-        x = self.dropout2(x)
-        x = self.fc2(x)
+        x = self.conv_part(x)
+        x = self.linear_part(x)
         output = F.log_softmax(x, dim=1)
         return output
 
@@ -219,6 +158,12 @@ def main():
         default=False,
         help="For Saving the current Model",
     )
+    parser.add_argument(
+        "--pq",
+        action="store_true",
+        default=False,
+        help="whether use prune-quantize training"
+    )
 
     args = parser.parse_args()
     use_cuda = not args.no_cuda and torch.cuda.is_available()
@@ -241,9 +186,20 @@ def main():
     dataset2 = datasets.MNIST("./data", train=False, transform=transform)
     train_loader = torch.utils.data.DataLoader(dataset1, **train_kwargs)
     test_loader = torch.utils.data.DataLoader(dataset2, **test_kwargs)
-    print(f"training epoch size = {len(train_loader)}")
-    model = Net(epoch_size=len(train_loader)).to(device)
-    auto_name_prune_quantize_layers(model)
+    EPOCH_SIZE = len(train_loader)
+    print(f"training epoch size = {EPOCH_SIZE}")
+    model = Net()
+    if args.pq:
+        model = convert(model, prune(sparsity=0.75, dimensions={1}),  # structure pruning
+                        activation_layers=[nn.ReLU], 
+                        excluded_activation_layer_indexes=[(nn.ReLU, [-1])]) # exclude the last relu layer 
+        model = convert(model, quantize(bits=8, channelwise=-1, timeout=5*EPOCH_SIZE), # tensorwise quantization
+                        activation_layers=[nn.ReLU],
+                        weight_layers=[nn.Conv2d, nn.Linear],
+                        input=True)
+        model = devise_layerwise_pruning_schedule(model, start=2 * EPOCH_SIZE, interval=0.4 * EPOCH_SIZE, mask_refresh_interval=0.1 * EPOCH_SIZE)
+        print(model)
+    model = model.to(device) 
     optimizer = optim.Adadelta(model.parameters(), lr=args.lr)
     scheduler = StepLR(optimizer, step_size=1, gamma=args.gamma)
     for epoch in range(1, args.epochs + 1):

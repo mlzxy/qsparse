@@ -11,7 +11,7 @@ python3 examples/mnist.py
 # Test set: Average loss: 0.0234, Accuracy: 9922/10000 (99%)
 ```
 
-To train a quantized and pruned network:
+To train an 8-bit quantized and 75% pruned network:
 
 ```bash
 python3 examples/mnist.py --pq
