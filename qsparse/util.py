@@ -117,13 +117,26 @@ def calculate_mask_given_importance(importance: torch.Tensor, sparsity: float) -
 
 
 
-def log_functor(name: str):
+
+class style:
+    BLACK = '\033[30m'
+    RED = '\033[31m'
+    GREEN = '\033[32m'
+    YELLOW = '\033[33m'
+    BLUE = '\033[34m'
+    MAGENTA = '\033[35m'
+    CYAN = '\033[36m'
+    WHITE = '\033[37m'
+    UNDERLINE = '\033[4m'
+    RESET = '\033[0m'
+
+
+def log_functor(name: str, color=""):
     def log(msg: str):
-        root = logging_module.root
-        if root.hasHandlers():
-            getattr(root, name)(msg)
-        else:
-            print(msg)
+        msg = color + msg 
+        if color != "":
+            msg += style.RESET
+        print(msg)
 
     return log
 
@@ -132,9 +145,9 @@ class logging:
     """wrapper of logging module. use `print` if logging module is not configured."""
 
     info = log_functor("info")
-    warn = log_functor("warn")
-    warning = log_functor("warning")
-    error = log_functor("error")
-    danger = log_functor("error")
-    exception = log_functor("exception")
-    debug = log_functor("debug")
+    warn = log_functor("warn", color=style.YELLOW)
+    warning = log_functor("warning", color=style.YELLOW)
+    error = log_functor("error", color=style.RED)
+    danger = log_functor("error", color=style.RED)
+    exception = log_functor("exception", color=style.RED)
+    debug = log_functor("debug", color=style.GREEN)
