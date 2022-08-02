@@ -426,6 +426,8 @@ class QuantizeLayer(nn.Module):
         if self.timeout > 0:
             if t >= self.timeout:
                 if self.training:
+                    if t == self.timeout:
+                        logging.warn(f"quantizing {self.name} with {self.bits} bits")
                     new_weight = self.callback.optimize(x, self.bits, self.weight, 
                                                         batched=self.batch_dimension == 0, channel_index=self.channelwise)
                     if new_weight is not None:
