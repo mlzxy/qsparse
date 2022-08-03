@@ -1,4 +1,5 @@
 import math
+import copy
 import warnings
 from argparse import ArgumentError
 import os.path as osp
@@ -158,7 +159,7 @@ class PruneLayer(nn.Module):
     """
 
     def __str__(self):
-        return f"PruneLayer(sparsity={self.sparsity}, start={self.start})"
+        return f"PruneLayer(sparsity={self.sparsity}, start={self.start}, interval={self.interval}, repetition={self.repetition}, dimensions={self.dimensions})"
 
     def __repr__(self):
         return str(self)
@@ -335,7 +336,9 @@ def prune(
 
         
 
-def devise_layerwise_pruning_schedule(net: nn.Module, start:int = 1, interval:int=10, mask_refresh_interval:int = 1):
+def devise_layerwise_pruning_schedule(net: nn.Module, start:int = 1, interval:int=10, mask_refresh_interval:int = 1, inplace=False):
+    if not inplace:
+        net = copy.deepcopy(net)
     players = [mod for mod in net.modules() if isinstance(mod, PruneLayer)]
     is_weight_prune = all([p.name.endswith('.prune') for p in players])
     for l in players:

@@ -193,7 +193,7 @@ def main():
         model = convert(model, prune(sparsity=0.75, dimensions={1}),  # structure pruning
                         activation_layers=[nn.ReLU], 
                         excluded_activation_layer_indexes=[(nn.ReLU, [-1])]) # exclude the last relu layer 
-        model = convert(model, quantize(bits=8, channelwise=-1, timeout=5*EPOCH_SIZE), # tensorwise quantization
+        model = convert(model, quantize(bits=4, channelwise=-1, timeout=5*EPOCH_SIZE), # tensorwise quantization
                         activation_layers=[nn.ReLU],
                         weight_layers=[nn.Conv2d, nn.Linear],
                         input=True)

@@ -262,6 +262,8 @@ class DecimalQuantizer(BaseQuantizer):
     def optimize(self, x, bits, weight=None, batched=False, channel_index=-1, **kwargs):
         with torch.no_grad():
             x = x.abs()
+            batch_size = x.shape[0] if batched else -1
+            wshape = self.get_weight_shape(x, channel_index)
             if channel_index == -1:
                 x = x.view(1, -1)
             elif channel_index != 0:
@@ -272,11 +274,10 @@ class DecimalQuantizer(BaseQuantizer):
                 x = x.view(x.shape[0], -1)
             new_weight = x.max(dim=1).values / (2 ** (bits - 1))
             if batched:
-                new_weight = new_weight.mean(dim=0)
-            new_weight = new_weight.view(
-                self.get_weight_shape(x, channel_index))
+                new_weight = new_weight.view(-1, batch_size).mean(dim=1)
+            new_weight = new_weight.view(wshape)
         if self.t == 0:
-            weight = new_weight.view(self.get_weight_shape(x, channel_index))
+            weight = new_weight
         else:
             weight.data[:] = (self.t * weight + new_weight) / (self.t + 1)
         self.t += 1
@@ -368,7 +369,7 @@ class QuantizeLayer(nn.Module):
     """
 
     def __str__(self):
-        return f"QuantizeLayer(bits={self.bits})"
+        return f"QuantizeLayer(bits={self.bits}, timeout={self.timeout}, callback={self.callback.__class__.__name__})"
 
     def __repr__(self):
         return str(self)

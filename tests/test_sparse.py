@@ -179,7 +179,7 @@ def test_more_pruning_options():
         out = layer(inp, 0.5, mask)
         out.backward(torch.rand((1,) + shape) / 10)
     layer.eval()
-    assert np.isclose(get_sparsity(mask), 0.5, atol=1 / np.prod(shape))
+    assert np.isclose(get_sparsity(mask), 0.5, atol=2 / np.prod(shape))
 
 
     mask = torch.ones(shape)
@@ -187,7 +187,7 @@ def test_more_pruning_options():
     for _ in range(1500):
         inp = (torch.rand(*shape) > 0.5).float()
         out = layer(inp, 0.5, mask)
-    assert np.isclose(get_sparsity(mask), 0.5, atol=1 / np.prod(shape))   
+    assert np.isclose(get_sparsity(mask), 0.5, atol=2 / np.prod(shape))   
 
 
 def test_layerwise():
