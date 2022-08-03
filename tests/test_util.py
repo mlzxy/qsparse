@@ -83,3 +83,30 @@ def test_calculate_mask_given_importance():
     mask = calculate_mask_given_importance(tensor, target_sparsity)
     assert (1 - mask.sum().item() / mask.numel()) == target_sparsity
     
+
+def test_preload_state_dict():
+    from qsparse.util import preload_qsparse_state_dict
+
+    def make_conv():
+        return quantize(prune(nn.Conv2d(16, 32, 3), 
+                            sparsity=0.5, start=200, 
+                            interval=10, repetition=4), 
+                    bits=8, timeout=100)
+
+    conv = make_conv()
+
+    for _ in range(241):
+        conv(torch.rand(10, 16, 7, 7))
+
+    try:
+        conv2 = make_conv()
+        conv2.load_state_dict(conv.state_dict())
+    except RuntimeError as e:
+        print(f'\nCatch error as expected: {e}\n' )
+
+    conv3 = make_conv()
+    preload_qsparse_state_dict(conv3, conv.state_dict())
+    conv3.load_state_dict(conv.state_dict())
+
+    tensor = torch.rand(10, 16, 7, 7)
+    assert np.allclose(conv(tensor).detach().numpy(), conv3(tensor).detach().numpy(), atol=1e-5)
