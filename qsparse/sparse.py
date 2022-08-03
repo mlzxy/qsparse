@@ -26,7 +26,7 @@ class MagnitudePruningCallback(nn.Module):
         forward_hook: Callable[[torch.Tensor, str], None] = None
     ):
         """
-        Magnitude-based pruning function with type signature of [PruneCallback][qsparse.common.PruneCallback].
+        Magnitude-based pruning function  as the callback of [prune][qsparse.sparse.prune].
 
         Args:
             mask_refresh_interval (int, optional): number of steps to refresh mask. Defaults to 1.
@@ -123,9 +123,10 @@ class MagnitudePruningCallback(nn.Module):
 
 
 class UniformPruningCallback(MagnitudePruningCallback):
-    """unstructured uniform pruning function with type signature of [PruneCallback][qsparse.common.PruneCallback].
+    """unstructured uniform pruning function.
+
     This function will prune uniformly without considering magnitude of the input tensors. If a init mask is provided,
-    this function will not reactivate those already pruned locations in init mask.
+    it will not reactivate those already pruned locations in init mask.
     """
 
     def initialize(self, mask: torch.Tensor):
@@ -236,6 +237,9 @@ class PruneLayer(nn.Module):
                     ).to(x.device),
                     requires_grad=False,
                 )
+                if self.mask.numel() == 1:
+                    logging.warn(f"the mask shape of {self.name} is {tuple(self.mask.shape)}, which is not prunable")
+                    
             self._n_updates = nn.Parameter(
                 torch.zeros(1, dtype=torch.int).to(x.device),
                 requires_grad=False,
@@ -255,7 +259,7 @@ class PruneLayer(nn.Module):
                 f"[Prune{self.name if self.name == '' else f' @ {self.name}'}] [Step {self._n_updates.item()}] pruned {self._cur_sparsity.item():.02f}"
             )
         
-        if not self.training:
+        if not self.training or self.mask.numel() == 1:
             out = x * self.mask
         else:
             n_updates = self._n_updates.item()
@@ -343,6 +347,7 @@ def devise_layerwise_pruning_schedule(net: nn.Module, start:int = 1, interval:in
     is_weight_prune = all([p.name.endswith('.prune') for p in players])
     for l in players:
         l.start = start
+        l.interval = interval
         l.repetition = 1
         l.schedules = [start, ]
         l.callback.mask_refresh_interval = mask_refresh_interval 
