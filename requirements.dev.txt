@@ -17,3 +17,4 @@ torchvision
 typing_extensions
 coverage-badge
 mkdocs-jupyter>=0.18.0
+ipython_genutils==0.2.0
