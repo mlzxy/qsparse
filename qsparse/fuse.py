@@ -85,7 +85,7 @@ def fuse_bn(  # noqa: C901
     Args:
         model (nn.Module): network
         layers (Iterable[str], optional): [description]. Defaults to ["Conv2d", "Linear", "ConvTranspose2d"].
-        handlers (Optional[Mapping[str, BNFuser]], optional): Mapping from layer type to [BNFuser][qsparse.fuse.BNFuser]. Defaults to None, will use { Linear: [fuse\_bn\_linear][qsparse.fuse.fuse_bn_linear], Conv2d: [fuse\_bn\_conv2d][qsparse.fuse.fuse_bn_conv2d], ConvTranspose2d: [fuse\_bn\_deconv2d][qsparse.fuse.fuse_bn_deconv2d] }.
+        handlers (Optional[Mapping[str, BNFuser]], optional): Mapping from layer type to [BNFuser][qsparse.fuse.BNFuser]. Defaults to None, will use { Linear: [linear\_bn\_fuser][qsparse.fuse.linear_bn_fuser], Conv2d: [conv2d\_bn\_fuser][qsparse.fuse.conv2d_bn_fuser], ConvTranspose2d: [deconv2d\_bn\_fuser][qsparse.fuse.deconv2d_bn_fuser] }.
         log (bool, optional): whether print the fuse log. Defaults to True.
         inplace (bool, optional): whether mutates the original module. Defaults to False.
 

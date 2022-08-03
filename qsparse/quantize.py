@@ -4,7 +4,7 @@ import os.path as osp
 import math
 import warnings
 from collections import deque
-from typing import Tuple
+from typing import Tuple, Union, List
 import warnings
 import numpy as np
 import torch.nn.functional as F
@@ -235,16 +235,16 @@ def quantize_with_scaler(
 
 def quantize_with_line(x: torch.Tensor, 
                 bits: int = 8, 
-                lines=(-0.1, 0.9), 
-                channel_index=-1, 
-                inplace=False, 
-                float_zero_point=True) -> torch.Tensor:
+                lines: Union[Tuple[float, float], List[Tuple[float, float]]]=(-0.1, 0.9), 
+                channel_index: int=-1, 
+                inplace: bool=False, 
+                float_zero_point: bool=True) -> torch.Tensor:
     """Applying asymmetric uniform quantization over input tensor
 
     Args:
-        input (torch.Tensor): tensor to be quantized
+        x (torch.Tensor): tensor to be quantized
         bits (int, optional): Bitwidth. Defaults to 8.
-        lines (tuple, optional): The estimated lower and upper bound of input data. Defaults to (-0.1, 0.9).
+        lines (Union[Tuple[float, float], List[Tuple[float, float]]], optional): The estimated lower and upper bound of input data. Defaults to (-0.1, 0.9).
         channel_index (int, optional): Channel axis, for channelwise quantization. Defaults to -1, which means tensorwise.
         inplace (bool, optional): Whether the operation is inplace. Defaults to False.
         float_zero_point (bool, optional): Whether use floating-point value to store zero-point. Defaults to True, recommend to turn on for training and off for evaluation. 
