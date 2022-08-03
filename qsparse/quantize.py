@@ -54,9 +54,9 @@ class DecimalQuantization(torch.autograd.Function):
         ctx.save_for_backward(ensure_tensor(limit), ensure_tensor(tof))
         q = (input * toi).int()
         if use_uint:
-            q.clamp_(0, 2 * limit - 1)
+            q.float().clamp_(0, 2 * limit - 1)
         else:
-            q.clamp_(
+            q.float().clamp_(
                 -limit + ctx.notch,
                 limit - 1 + ctx.notch,
             )
@@ -108,9 +108,9 @@ class ScalerQuantization(torch.autograd.Function):
         ctx.save_for_backward(ensure_tensor(limit), ensure_tensor(scaler))
         q = (input / scaler).round().int()
         if use_uint:
-            q.clamp_(0, 2 * limit - 1)
+            q.float().clamp_(0, 2 * limit - 1)
         else:
-            q.clamp_(
+            q.float().clamp_(
                 -limit + ctx.notch,
                 limit - 1 + ctx.notch,
             )
