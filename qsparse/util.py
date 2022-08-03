@@ -1,8 +1,9 @@
 import logging as logging_module
-from typing import List, Optional, TypeVar
+from typing import List, Optional, TypeVar, Dict
 
 import torch
 import torch.nn as nn
+
 
 T = TypeVar("T")
 
@@ -114,6 +115,34 @@ def calculate_mask_given_importance(importance: torch.Tensor, sparsity: float) -
     idx = max(int(sparsity * n - 1), 0)
     threshold = values[idx + 1]
     return importance >= threshold
+
+
+def preload_qsparse_state_dict(model: torch.nn.Module, state_dict: Dict[str, torch.Tensor]) -> torch.nn.Module:
+    """calling before `load_state_dict` to preload the state dict of QSPARSE layers, because `load_state_dict` currently does not allow shape mismatch
+
+    Args:
+        model (torch.nn.Module): model to be loaded
+        state_dict (Dict[str, torch.Tensor]): state dict
+
+    Returns:
+        torch.nn.Module: loaded model
+    """
+    from qsparse.quantize import QuantizeLayer
+    from qsparse.sparse import PruneLayer
+    keys = list(state_dict.keys())
+    device = list(model.parameters())[0].device
+    for ki, mod in model.named_modules():
+        if isinstance(mod, (PruneLayer, QuantizeLayer)):
+            for kj, submod in mod.named_modules():
+                prefix = ""
+                if ki:
+                    prefix += (ki + '.')
+                if kj:
+                    prefix += (kj + '.')
+                for K in keys:
+                    if K.startswith(prefix) and '.' not in K[len(prefix):]:
+                        submod._parameters[K[len(prefix):]] = nn.Parameter(state_dict[K].to(device), requires_grad=False)
+    return model
 
 
 
