@@ -22,9 +22,9 @@ from qsparse.util import get_option, logging
 
 
 class DecimalQuantization(torch.autograd.Function):
-    """Straight-Through Gradient Estimator.
+    """Straight-Through Gradient Estimator (with shift).
 
-    Please look for detailed description on arguments in [linear\_quantize\_callback][qsparse.quantize.linear_quantize_callback].
+    Please look for detailed description on arguments in [quantize\_with\_decimal][qsparse.quantize.quantize_with_decimal].
     """
 
     @staticmethod
@@ -80,7 +80,7 @@ class DecimalQuantization(torch.autograd.Function):
 class ScalerQuantization(torch.autograd.Function):
     """Straight-Through Gradient Estimator (with scaler).
 
-    Please look for detailed description on arguments in [scaler\_quantize\_callback][qsparse.quantize.scaler_quantize_callback].
+    Please look for detailed description on arguments in [quantize\_with\_scaler][qsparse.quantize.quantize_with_scaler].
     """
 
     @staticmethod
@@ -132,6 +132,11 @@ class ScalerQuantization(torch.autograd.Function):
 
 
 class LineQuantization(torch.autograd.Function):
+    """Straight-Through Gradient Estimator (asymmetric).
+
+    Please look for detailed description on arguments in [quantize\_with\_line][qsparse.quantize.quantize_with_line].
+    """
+    
     @staticmethod
     def forward(ctx, 
                 x: torch.Tensor, 
@@ -143,6 +148,8 @@ class LineQuantization(torch.autograd.Function):
         with torch.no_grad():
             N = 2**bits
             shape = [1] * len(x.shape)
+            if not isinstance(lines, torch.Tensor):
+                lines = torch.tensor(lines).view(-1, 2).to(x.device)
             if channel_index >= 0:
                 shape[channel_index] = -1
                 assert x.shape[channel_index] == lines.shape[0]
@@ -182,20 +189,48 @@ def quantize_with_decimal(
         input: torch.Tensor,
         bits: int = 8,
         decimal: TensorOrInt = 5,
-        channel_index: int = 1,
+        channel_index: int = -1,
         use_uint: bool = False,
         backward_passthrough: bool = False,
-        flip_axis: bool = False):
+        flip_axis: bool = False) -> torch.Tensor:
+    """Applying power-of-2 uniform quantization over input tensor
+
+    Args:
+        input (torch.Tensor): tensor to be quantized
+        bits (int, optional): Bitwidth. Defaults to 8.
+        decimal (TensorOrInt, optional): Number of bits used to represent fractional number (shift). Defaults to 5.
+        channel_index (int, optional): Channel axis, for channelwise quantization. Defaults to -1, which means tensorwise.
+        use_uint (bool, optional): Whether use uint to quantize input. If so, it will ignores the negative number, which could be used for ReLU output. Defaults to False.
+        backward_passthrough (bool, optional): Whether to skip the saturation operation of STE on gradients during the backward pass. Defaults to False.
+        flip_axis (bool, optional): Whether use flip the axis to represent numbers (the largest positive number increases from `2^{d}-1` to `2^{d}`, while the smallest negative number reduces its absolute value). Defaults to False.
+
+    Returns:
+        torch.Tensor: quantized tensor
+    """
     return DecimalQuantization.apply(input, bits, decimal, channel_index, use_uint, backward_passthrough, flip_axis)
 
 def quantize_with_scaler(
         input: torch.Tensor,
         bits: int = 8,
         scaler: TensorOrFloat = 0.1,
-        channel_index: int = 1,
+        channel_index: int = -1,
         use_uint: bool = False,
         backward_passthrough: bool = False,
-        flip_axis: bool = False):
+        flip_axis: bool = False) -> torch.Tensor:
+    """Applying scaling-factor based uniform quantization over input tensor
+
+    Args:
+        input (torch.Tensor): tensor to be quantized
+        bits (int, optional): Bitwidth. Defaults to 8.
+        scaler (TensorOrFloat, optional): Scaling factor. Defaults to 0.1.
+        channel_index (int, optional): Channel axis, for channelwise quantization. Defaults to -1, which means tensorwise.
+        use_uint (bool, optional): Whether use uint to quantize input. If so, it will ignores the negative number, which could be used for ReLU output. Defaults to False.
+        backward_passthrough (bool, optional): Whether to skip the saturation operation of STE on gradients during the backward pass. Defaults to False.
+        flip_axis (bool, optional): Whether use flip the axis to represent numbers (the largest positive number increases from `2^{d}-1` to `2^{d}`, while the smallest negative number reduces its absolute value). Defaults to False.
+
+    Returns:
+        torch.Tensor: quantized tensor
+    """
     return ScalerQuantization.apply(input, bits, scaler, channel_index, use_uint, backward_passthrough, flip_axis)
 
 def quantize_with_line(x: torch.Tensor, 
@@ -203,15 +238,30 @@ def quantize_with_line(x: torch.Tensor,
                 lines=(-0.1, 0.9), 
                 channel_index=-1, 
                 inplace=False, 
-                float_zero_point=True):
+                float_zero_point=True) -> torch.Tensor:
+    """Applying asymmetric uniform quantization over input tensor
+
+    Args:
+        input (torch.Tensor): tensor to be quantized
+        bits (int, optional): Bitwidth. Defaults to 8.
+        lines (tuple, optional): The estimated lower and upper bound of input data. Defaults to (-0.1, 0.9).
+        channel_index (int, optional): Channel axis, for channelwise quantization. Defaults to -1, which means tensorwise.
+        inplace (bool, optional): Whether the operation is inplace. Defaults to False.
+        float_zero_point (bool, optional): Whether use floating-point value to store zero-point. Defaults to True, recommend to turn on for training and off for evaluation. 
+
+    Returns:
+        torch.Tensor: quantized tensor
+    """
     return LineQuantization.apply(x, bits, lines, channel_index, inplace, float_zero_point)
 
 
 class BaseQuantizer(nn.Module):
+    """Base class for quantizer, interface for the callback function of [quantize][qsparse.quantize.quantize].
+    """
     weight_size = 1
 
     def optimize(self, tensor, bits, weight=None, batched=False, channel_index=-1) -> torch.Tensor:
-        """return weight"""
+        """return the updated weight for each step"""
         raise NotImplementedError
 
     def forward(self, tensor, bits, weight=None, batched=False, channel_index=-1) -> torch.Tensor:
@@ -223,6 +273,13 @@ class BaseQuantizer(nn.Module):
 
 
 class DecimalQuantizer(BaseQuantizer):
+    """
+    The quantizer that implements the algorithm 3 of the MDPI paper. The `forward` function covers the quantization logic and the `optimize` function covers the parameter update.
+
+    It always restricts the scaling factor to be power of 2.
+    """
+    
+
     weight_size = 1
 
     def __init__(
@@ -233,6 +290,14 @@ class DecimalQuantizer(BaseQuantizer):
         group_num=-1,
         group_timeout=512
     ):
+        """
+        Args:
+            use_uint (bool, optional): See [quantize\_with\_decimal][qsparse.quantize.quantize_with_decimal]. Defaults to False.
+            backward_passthrough (bool, optional): See [quantize\_with\_decimal][qsparse.quantize.quantize_with_decimal]. Defaults to False.
+            flip_axis (bool, optional): See [quantize\_with\_decimal][qsparse.quantize.quantize_with_decimal]. Defaults to False.
+            group_num (int, optional): Number of groups used for groupwise quantization. Defaults to -1, which disables groupwise quantization.
+            group_timeout (int, optional): Number of steps when the clustering starts after the activation of the quantization operator. Defaults to 512.
+        """
         super().__init__()
         self.use_uint = use_uint
         self.backward_passthrough = backward_passthrough
@@ -286,7 +351,7 @@ class DecimalQuantizer(BaseQuantizer):
     def forward(self, tensor, bits, scaler, channel_index=-1, **kwargs):
         if self.t >= self.group_timeout and self.group_num > 0 and scaler.numel() > self.group_num:
             if self.groups is None:
-                logging.danger( f"start to clustering channels into {self.group_num} groups")
+                logging.danger( f"clustering {len(scaler)} channels into {self.group_num} groups")
                 clustering = AgglomerativeClustering(
                     n_clusters=self.group_num)
                 clustering.fit(scaler.detach().cpu().numpy())
@@ -303,6 +368,8 @@ class DecimalQuantizer(BaseQuantizer):
 
 
 class ScalerQuantizer(DecimalQuantizer):
+    """The quantizer that implements the algorithm 3 of the MDPI paper, without the power of 2 restriction.
+    """
     weight_size = 1
 
     def __init__(self, *args, **kwargs):
@@ -312,6 +379,8 @@ class ScalerQuantizer(DecimalQuantizer):
 
 
 class AdaptiveQuantizer(DecimalQuantizer):
+    """The quantizer that implements the algorithm 2 of the MDPI paper.
+    """
     weight_size = 2
 
     def __init__(self, *args, **kwargs):
@@ -369,7 +438,7 @@ class QuantizeLayer(nn.Module):
     """
 
     def __str__(self):
-        return f"QuantizeLayer(bits={self.bits}, timeout={self.timeout}, callback={self.callback.__class__.__name__})"
+        return f"QuantizeLayer(bits={self.bits}, timeout={self.timeout}, callback={self.callback.__class__.__name__}, channelwise={self.channelwise})"
 
     def __repr__(self):
         return str(self)
