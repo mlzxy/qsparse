@@ -8,7 +8,7 @@ mkdocs-rtd-dropdown>=1.0.2
 mkdocstrings>=0.12.2
 pre-commit
 pudb
-Pygments>=2.6.1
+Pygments==2.10.0
 pymdown-extensions<8.0
 pytest
 pytest-cov
