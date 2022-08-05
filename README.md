@@ -7,7 +7,7 @@ QSPARSE provides the open source implementation of the quantization and pruning 
 <table>
 <tr>
 <th>Full Precision</th>
-<th>Joint Quantization <sub style="font-size:8px">4bit</sub> and Pruning <sub style="font-size:8px">75%</sub> </th>
+<th>Joint Quantization <sub style="font-size:8px">4bit</sub> and Channel Pruning <sub style="font-size:8px">75%</sub> </th>
 </tr>
 <tr>
 <td >
