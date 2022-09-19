@@ -338,7 +338,7 @@ class DecimalQuantizer(BaseQuantizer):
             else:
                 x = x.view(x.shape[0], -1)
             new_weight = x.max(dim=1).values / (2 ** (bits - 1))
-            if batched:
+            if batched and channel_index >= 0:
                 new_weight = new_weight.view(-1, batch_size).mean(dim=1)
             new_weight = new_weight.view(wshape)
         if self.t == 0:
